@@ -74,6 +74,7 @@ A curated list of useful open-source GitHub projects organized by category
 - [Vault](https://github.com/hashicorp/vault) - Tool for securely accessing secrets, providing encryption services, and managing sensitive data with dynamic secrets and fine-grained access controls.
 - [cert-manager](https://github.com/cert-manager/cert-manager) - Kubernetes add-on that automates the management and issuance of TLS certificates from various sources including Let's Encrypt.
 - [Certbot](https://github.com/certbot/certbot) - EFF's tool for automatically obtaining and renewing Let's Encrypt SSL/TLS certificates with support for various web servers.
+- [External Secrets Operator](https://github.com/external-secrets/external-secrets) - Kubernetes operator that synchronizes secrets from external secret management systems (AWS Secrets Manager, GCP Secret Manager, Azure Key Vault, HashiCorp Vault) into Kubernetes Secret objects with automatic refresh capabilities.
 
 ## Security - Code Analysis
 
