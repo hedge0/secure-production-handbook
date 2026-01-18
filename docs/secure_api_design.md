@@ -164,7 +164,7 @@ Use containers/VMs when:
 
 **Python**:
 
-- Cold start: ~300-500ms
+- Cold start: ~200-500ms
 - Excellent for data/ML APIs, large ecosystem
 - Competitive cold start times despite being interpreted
 - Good for: Data processing, ML inference, teams familiar with Python
