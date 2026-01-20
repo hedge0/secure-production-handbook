@@ -484,12 +484,27 @@ Encrypt sensitive fields in application code before writing to database using AE
 
 **HTTP Method Validation**:
 
-Validate HTTP method matches endpoint requirements, return **405 Method Not Allowed** for incorrect methods:
+Validate HTTP method matches endpoint requirements before processing any request. Return **405 Method Not Allowed** for incorrect methods:
 
-- GET: Read-only, no body
-- POST: Create resources with body
-- PUT/PATCH: Update resources with body
-- DELETE: Remove resources
+- **GET**: Read-only operations, no request body expected
+- **POST**: Create new resources, requires request body
+- **PUT/PATCH**: Update existing resources, requires request body
+- **DELETE**: Remove resources, typically no body
+
+Configure your web framework or API gateway to enforce method restrictions per endpoint. Many frameworks provide decorators or middleware for this:
+
+```python
+# Python FastAPI example
+@app.get("/users/{id}")  # Only allows GET
+async def get_user(id: int):
+    return user
+
+@app.post("/users")  # Only allows POST
+async def create_user(user: User):
+    return created_user
+```
+
+This prevents method confusion attacks and ensures endpoints behave as designed. For example, a GET endpoint should never modify data, and attempting a POST to a read-only endpoint should be immediately rejected.
 
 **JSON Schema Validation**:
 
