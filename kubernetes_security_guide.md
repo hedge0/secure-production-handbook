@@ -140,6 +140,8 @@ Never run databases in Kubernetes for production. Use AWS RDS, GCP Cloud SQL, or
 - Multi-AZ enabled (automatic failover in 60-120 seconds)
 - Automated daily snapshots with 7-30 day retention
 - Point-in-time recovery enabled
+- Create application database user with least privilege (never use root/admin user for application connections)
+- Grant only required permissions (SELECT, INSERT, UPDATE, DELETE on specific tables)
 
 **Connection from Kubernetes**:
 
@@ -794,7 +796,7 @@ This guide's security controls prevent real-world Kubernetes attacks commonly se
 **Database Compromise via Pod Access**
 
 - Attack: Compromised pod used to access and exfiltrate production databases
-- Mitigated by: Databases in private subnets with security groups (worker nodes only), credentials in external vaults, multi-AZ with backups, NetworkPolicies limiting database access
+- Mitigated by: Databases in private subnets with security groups (worker nodes only), credentials in external vaults, application database user with least privilege (non-root), limited permissions on specific tables only, multi-AZ with backups, NetworkPolicies limiting database access
 
 **Control Plane / API Server Attack**
 
