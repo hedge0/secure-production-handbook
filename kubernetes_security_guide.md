@@ -11,14 +11,16 @@ A cloud-agnostic guide for building production-ready Kubernetes clusters with de
 3. [Network Architecture & Database Layer](#network-architecture--database-layer)
 4. [Cluster Architecture & Separation](#cluster-architecture--separation)
 5. [Ingress & Traffic Management](#ingress--traffic-management)
-6. [Runtime Security & Policy Enforcement](#runtime-security--policy-enforcement)
-7. [Secrets Management](#secrets-management)
-8. [Infrastructure as Code & GitOps](#infrastructure-as-code--gitops)
-9. [Observability & Logging](#observability--logging)
-10. [Disaster Recovery](#disaster-recovery)
-11. [Incident Response](#incident-response)
-12. [Attack Scenarios Prevented](#attack-scenarios-prevented)
-13. [References](#references)
+6. [Policy Enforcement with Kyverno](#policy-enforcement-with-kyverno)
+7. [Continuous Vulnerability & Threat Detection](#continuous-vulnerability--threat-detection)
+8. [External Secrets Integration](#external-secrets-integration)
+9. [Secret Rotation & Lifecycle Management](#secret-rotation--lifecycle-management)
+10. [Infrastructure as Code & GitOps](#infrastructure-as-code--gitops)
+11. [Observability & Logging](#observability--logging)
+12. [Disaster Recovery](#disaster-recovery)
+13. [Incident Response](#incident-response)
+14. [Attack Scenarios Prevented](#attack-scenarios-prevented)
+15. [References](#references)
 
 ## Overview
 
@@ -285,9 +287,9 @@ Deploy Web Application Firewall at load balancer to filter malicious traffic:
 - Service-to-service metrics (latency, error rates)
 - Visualize traffic flow with Kiali dashboard
 
-## Runtime Security & Policy Enforcement
+## Policy Enforcement with Kyverno
 
-Enforce security policies at deployment time and monitor runtime behavior for threats.
+Enforce security policies at deployment time to prevent misconfigurations and ensure compliance.
 
 ### Kyverno Policy Engine
 
@@ -408,6 +410,10 @@ spec:
 
 **Deployment workflow**: Kyverno runs as admission controller, validates policies before pods are created, blocks non-compliant workloads automatically.
 
+## Continuous Vulnerability & Threat Detection
+
+Monitor running workloads for vulnerabilities and detect runtime threats in real-time.
+
 ### Trivy Operator for Vulnerability Scanning
 
 Deploy [Trivy Operator](https://github.com/aquasecurity/trivy-operator) for continuous security scanning in Kubernetes.
@@ -480,7 +486,7 @@ Deploy [Falco](https://github.com/falcosecurity/falco) for real-time threat dete
 - Configure severity levels (info, warning, critical)
 - Alert on critical events only (reduce noise)
 
-## Secrets Management
+## External Secrets Integration
 
 Store secrets in external vault services and inject them into Kubernetes pods securely.
 
@@ -516,6 +522,10 @@ Store secrets in external vault services and inject them into Kubernetes pods se
 - Azure Key Vault Provider for Secrets Store CSI Driver
 - Managed identities for pod authentication
 - Secrets mounted as volumes
+
+## Secret Rotation & Lifecycle Management
+
+Implement modern best practices for secret rotation and lifecycle management.
 
 ### Secret Rotation
 

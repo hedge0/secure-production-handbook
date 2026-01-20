@@ -11,15 +11,17 @@ A cloud-agnostic guide for building production-ready APIs with a practical blend
 3. [Architecture Patterns](#architecture-patterns)
 4. [Application Security (Pre-Deployment)](#application-security-pre-deployment)
 5. [Edge Security Layer](#edge-security-layer)
-6. [Runtime Security Layer](#runtime-security-layer)
-7. [Rate Limiting & Throttling](#rate-limiting--throttling)
-8. [Error Handling & Responses](#error-handling--responses)
-9. [Observability & Compliance](#observability--compliance)
-10. [Performance Optimization](#performance-optimization)
-11. [API Versioning](#api-versioning)
-12. [Incident Response](#incident-response)
-13. [Attack Scenarios Prevented](#attack-scenarios-prevented)
-14. [References](#references)
+6. [Authentication & Access Control](#authentication--access-control)
+7. [Data Security & Input Validation](#data-security--input-validation)
+8. [Rate Limiting & Throttling](#rate-limiting--throttling)
+9. [Error Handling & Responses](#error-handling--responses)
+10. [Logging & Monitoring](#logging--monitoring)
+11. [Compliance & Retention](#compliance--retention)
+12. [Performance Optimization](#performance-optimization)
+13. [API Versioning](#api-versioning)
+14. [Incident Response](#incident-response)
+15. [Attack Scenarios Prevented](#attack-scenarios-prevented)
+16. [References](#references)
 
 ## Overview
 
@@ -308,9 +310,9 @@ Implement aggressive catch-all rate limiting for DDoS mitigation:
 
 Edge rate limiting should be basic and aggressive. Fine-grained, business-logic-aware rate limiting happens at application layer.
 
-## Runtime Security Layer
+## Authentication & Access Control
 
-Validate and secure every API request at the application layer before processing.
+Secure API access through proper authentication, authorization, and cross-origin resource sharing.
 
 ### Secrets Management Integration
 
@@ -320,39 +322,6 @@ Store all sensitive credentials in external secrets manager - never hardcode or 
 - Application retrieves secrets at runtime using IAM roles/service accounts
 - Serverless: Fetch on cold start with SDK caching
 - Containers: Fetch on startup, rotate periodically
-
-### Data Encryption at Rest
-
-Encrypt sensitive data before storing in databases to protect against database breaches, stolen backups, and insider threats.
-
-**Managed Database Encryption** (baseline protection):
-
-Enable encryption at database creation - protects against physical disk theft and unauthorized disk access:
-
-- AWS RDS: `storage_encrypted = true` with optional KMS key
-- GCP Cloud SQL: Enable disk encryption with customer-managed keys
-- Azure Database: Transparent Data Encryption (TDE) enabled by default
-
-**Application-Level Encryption** (for sensitive PII/PHI/PCI data):
-
-Encrypt sensitive fields in application code before writing to database using AES-256-GCM or equivalent:
-
-- Encrypt: Credit card numbers, SSNs, medical records, financial data
-- Use envelope encryption: Generate data encryption key (DEK) from KMS (AWS KMS, GCP Cloud KMS, Azure Key Vault)
-- Store encrypted DEK alongside ciphertext in database
-- Libraries: AWS Encryption SDK, Google Tink, Azure SDK
-
-**Why both layers**:
-
-- Managed DB encryption: Compliance baseline, protects data on disk
-- Application-level encryption: Protects against DBAs, SQL injection, credential compromise, stolen backups
-
-**When application-level encryption is required**:
-
-- HIPAA PHI, PCI-DSS cardholder data, highly sensitive PII
-- Zero-trust requirements (don't trust cloud admins or DBAs)
-- Multi-tenant SaaS with customer-managed encryption keys
-- Regulatory requirements for end-to-end encryption
 
 ### CORS Configuration
 
@@ -423,6 +392,43 @@ function validateToken(token) {
 - Cache public keys, don't fetch on every request
 
 **Test your validation:** Try using an expired token, wrong audience, or tampered signature - all should be rejected.
+
+## Data Security & Input Validation
+
+Protect sensitive data at rest and prevent injection attacks through comprehensive validation and sanitization.
+
+### Data Encryption at Rest
+
+Encrypt sensitive data before storing in databases to protect against database breaches, stolen backups, and insider threats.
+
+**Managed Database Encryption** (baseline protection):
+
+Enable encryption at database creation - protects against physical disk theft and unauthorized disk access:
+
+- AWS RDS: `storage_encrypted = true` with optional KMS key
+- GCP Cloud SQL: Enable disk encryption with customer-managed keys
+- Azure Database: Transparent Data Encryption (TDE) enabled by default
+
+**Application-Level Encryption** (for sensitive PII/PHI/PCI data):
+
+Encrypt sensitive fields in application code before writing to database using AES-256-GCM or equivalent:
+
+- Encrypt: Credit card numbers, SSNs, medical records, financial data
+- Use envelope encryption: Generate data encryption key (DEK) from KMS (AWS KMS, GCP Cloud KMS, Azure Key Vault)
+- Store encrypted DEK alongside ciphertext in database
+- Libraries: AWS Encryption SDK, Google Tink, Azure SDK
+
+**Why both layers**:
+
+- Managed DB encryption: Compliance baseline, protects data on disk
+- Application-level encryption: Protects against DBAs, SQL injection, credential compromise, stolen backups
+
+**When application-level encryption is required**:
+
+- HIPAA PHI, PCI-DSS cardholder data, highly sensitive PII
+- Zero-trust requirements (don't trust cloud admins or DBAs)
+- Multi-tenant SaaS with customer-managed encryption keys
+- Regulatory requirements for end-to-end encryption
 
 ### Request Validation
 
@@ -617,9 +623,9 @@ Generate unique request ID (UUID, ULID, KSUID) for every API call:
 - Return in error response body
 - Enables correlation between client errors and internal logs
 
-## Observability & Compliance
+## Logging & Monitoring
 
-Implement comprehensive logging for security, debugging, and regulatory compliance (SOC2, ISO 27001, HIPAA, etc.).
+Implement comprehensive logging and observability for security, debugging, and operational visibility.
 
 ### Audit Logging
 
@@ -648,6 +654,29 @@ Use JSON format for machine-parseable logs enabling easy parsing, filtering, and
   "user_agent": "Mozilla/5.0..."
 }
 ```
+
+### Log Forwarding & Centralization
+
+Forward logs to centralized logging service for real-time monitoring and analysis:
+
+- AWS CloudWatch Logs, GCP Cloud Logging, Azure Monitor
+- Splunk, ELK Stack, Loki
+- Enable searching, filtering, real-time alerts
+- Serverless: Logs automatically forwarded to cloud provider's logging service
+- Containers: Use log shippers (Fluentd, Fluent Bit, Vector)
+
+### Log Correlation with Request IDs
+
+Use request IDs to correlate logs across distributed systems:
+
+- Track request flow through microservices
+- Link audit logs, error logs, performance metrics
+- Debug issues across service boundaries
+- Essential for troubleshooting in distributed architectures
+
+## Compliance & Retention
+
+Implement log retention policies to meet regulatory compliance requirements.
 
 ### Hot Storage (30 Days)
 
@@ -680,14 +709,24 @@ Archive logs in compressed, low-cost storage for regulatory compliance:
 3. Upload to cold storage with lifecycle policies
 4. Delete from hot storage
 
-### Log Correlation with Request IDs
+### Compliance Considerations
 
-Use request IDs to correlate logs across distributed systems:
+**Data Privacy**:
 
-- Track request flow through microservices
-- Link audit logs, error logs, performance metrics
-- Debug issues across service boundaries
-- Essential for troubleshooting in distributed architectures
+- Never log sensitive PII (passwords, credit cards, SSNs) without encryption/hashing
+- Implement data retention policies compliant with GDPR right to deletion
+- Redact or hash sensitive fields in logs
+
+**Access Controls**:
+
+- Restrict log access to authorized personnel only
+- Implement audit trails for log access
+- Use role-based access control (RBAC) for log viewing
+
+**Data Sovereignty**:
+
+- Store logs in same region as application for GDPR/data residency requirements
+- Use region-specific cold storage for compliance
 
 ## Performance Optimization
 
