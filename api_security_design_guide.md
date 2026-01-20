@@ -866,93 +866,53 @@ Respond to security incidents quickly and effectively to minimize damage.
 
 This guide's security controls prevent real-world attacks commonly seen in production environments.
 
-### Credential Stuffing Attack
+### Authentication & Authorization Attacks
 
-**Attack**: Attackers use stolen username/password pairs from data breaches to gain unauthorized access.
+**Credential Stuffing**
 
-**Mitigated by**:
+- Attack: Stolen username/password pairs used for unauthorized access
+- Mitigated by: Edge rate limiting, application `/login` limits (5 req/min), failed auth monitoring, IP blocking
 
-- Edge rate limiting (blocks bulk login attempts at WAF)
-- Application-layer rate limiting on `/login` endpoint (5 requests/minute)
-- Failed authentication monitoring and alerting
-- IP blocking at edge after threshold violations
+**JWT Token Manipulation**
 
-### JWT Token Manipulation
+- Attack: Tampering with tokens to elevate privileges or impersonate users
+- Mitigated by: Complete JWT validation (signature, issuer, audience, expiration), algorithm confusion prevention (RS256 only), short-lived tokens (15 min)
 
-**Attack**: Attackers tamper with JWT tokens to elevate privileges or impersonate other users.
+**API Key Exposure & Abuse**
 
-**Mitigated by**:
+- Attack: Leaked keys from GitHub or client-side code used to access services
+- Mitigated by: Secret scanning (TruffleHog, GitHub), secrets in external vaults, per-user rate limiting, automated rotation
 
-- Complete JWT validation (signature, issuer, audience, expiration, algorithm)
-- Algorithm confusion prevention (enforcing RS256, rejecting `none`)
-- Short-lived tokens (15 minutes) limiting exposure window
-- Proper signature verification preventing token tampering
+### Injection & Input Attacks
 
-### SQL Injection
+**SQL Injection**
 
-**Attack**: Attackers inject malicious SQL into API parameters to access or modify database data.
+- Attack: Malicious SQL injected into parameters to access/modify database
+- Mitigated by: Parameterized queries (prepared statements), input validation (Zod, Pydantic, Joi), WAF rules blocking injection patterns, SAST scanning (Opengrep) catching vulnerable code pre-deployment
 
-**Mitigated by**:
+**Information Disclosure via Error Messages**
 
-- Parameterized queries (prepared statements) preventing SQL concatenation
-- Input validation with schema enforcement (Zod, Pydantic, Joi)
-- WAF rules blocking common SQL injection patterns
-- SAST scanning (Opengrep) catching vulnerable code pre-deployment
+- Attack: Extracting sensitive data from verbose errors (database details, file paths, internal IPs)
+- Mitigated by: Generic external error messages, detailed internal-only logging, request IDs for support, consistent error structure
 
-### API Key Exposure & Abuse
+### Availability & Performance Attacks
 
-**Attack**: Leaked API keys used to access services, often discovered in public GitHub repositories or client-side code.
+**DDoS / Resource Exhaustion**
 
-**Mitigated by**:
+- Attack: Overwhelming API with requests to cause degradation or outage
+- Mitigated by: Edge DDoS protection (Cloudflare, AWS Shield, Cloud Armor), aggressive edge rate limiting (100-2000 req/min per IP), endpoint-specific limits, auto-scaling
 
-- Secret scanning (TruffleHog, GitHub Secret Scanning) preventing commits
-- Secrets stored in external vaults (AWS Secrets Manager, GCP Secret Manager)
-- Per-user rate limiting preventing single key from causing damage
-- Automated credential rotation after suspected compromise
+**Cache Poisoning**
 
-### DDoS / Resource Exhaustion
+- Attack: Serving user A's cached data to user B, leaking sensitive information
+- Mitigated by: Cache keys include authentication context, `Cache-Control: no-store` on sensitive endpoints, proper CORS, authentication-aware API Gateway caching
 
-**Attack**: Overwhelming API with requests to cause service degradation or outage.
+### Supply Chain & Dependencies
 
-**Mitigated by**:
+**Dependency Vulnerabilities**
 
-- Edge-layer DDoS protection (Cloudflare, AWS Shield, Cloud Armor)
-- Aggressive edge rate limiting (100-2000 req/min per IP)
-- Application-layer endpoint-specific limits
-- Auto-scaling infrastructure (serverless or container orchestration)
-
-### Cache Poisoning
-
-**Attack**: Serving user A's cached data to user B, leaking sensitive information.
-
-**Mitigated by**:
-
-- Cache keys include authentication context (user ID, token)
-- `Cache-Control: no-store` headers on sensitive endpoints
-- Proper CORS configuration preventing cross-origin cache attacks
-- API Gateway caching configured with authentication-aware keys
-
-### Dependency Vulnerabilities
-
-**Attack**: Exploiting known vulnerabilities in outdated libraries and dependencies.
-
-**Mitigated by**:
-
-- Dependabot automated dependency updates
-- SAST scanning for vulnerable code patterns
-- Pre-deployment security scans in CI/CD
-- Regular dependency audits and timely patching
-
-### Information Disclosure via Error Messages
-
-**Attack**: Extracting sensitive information from verbose error messages (database details, file paths, internal IPs).
-
-**Mitigated by**:
-
-- Generic external error messages (no stack traces, queries, or paths)
-- Detailed errors logged internally only
-- Request IDs for support without exposing internals
-- Consistent error response structure
+- Attack: Exploiting known vulnerabilities in outdated libraries
+- Mitigated by: Dependabot automated updates catching vulnerable packages, pre-deployment security scans, regular audits, timely patching
 
 ## References
 

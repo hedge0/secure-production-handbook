@@ -767,115 +767,63 @@ spec:
 
 This guide's security controls prevent real-world Kubernetes attacks commonly seen in production environments.
 
-### Container Escape / Privilege Escalation
+### Container & Pod Security
 
-**Attack**: Attackers exploit privileged containers or dangerous capabilities to break out of container isolation and access the host system.
+**Container Escape / Privilege Escalation**
 
-**Mitigated by**:
+- Attack: Exploiting privileged containers or dangerous capabilities to break out and access host
+- Mitigated by: Kyverno blocking privileged containers/capabilities, non-root enforcement, read-only root filesystem, Falco runtime detection
 
-- Kyverno policies blocking privileged containers and dangerous capabilities
-- Non-root container enforcement via pod security policies
-- Read-only root filesystem where possible
-- Runtime detection with Falco for privilege escalation attempts
+**Malicious Runtime Behavior**
 
-### Lateral Movement via Network Access
+- Attack: Unexpected processes spawning (crypto miners, reverse shells, data exfiltration tools)
+- Mitigated by: Falco detecting shell spawns/suspicious syscalls/file access, network connection monitoring, automatic NetworkPolicy isolation
 
-**Attack**: Compromised pod used as pivot point to attack other pods or services within the cluster.
+**Resource Exhaustion / DoS**
 
-**Mitigated by**:
+- Attack: Malicious/buggy pods consuming all cluster resources causing outages
+- Mitigated by: Kyverno requiring CPU/memory limits, ResourceQuotas per namespace, pod disruption budgets, cluster autoscaling
 
-- Default-deny NetworkPolicies preventing unauthorized pod-to-pod communication
-- Istio service mesh enforcing mTLS between all pods
-- Namespace isolation with explicit allow rules
-- Micro-segmentation preventing blast radius expansion
+### Network & Lateral Movement
 
-### Supply Chain Attack via Unsigned Images
+**Lateral Movement via Network Access**
 
-**Attack**: Attackers push malicious container images to registry, which get deployed to production.
+- Attack: Compromised pod used as pivot to attack other pods/services
+- Mitigated by: Default-deny NetworkPolicies, Istio mTLS between pods, namespace isolation with explicit allow rules, micro-segmentation
 
-**Mitigated by**:
+**Database Compromise via Pod Access**
 
-- Kyverno image signature verification (Cosign) blocking unsigned images
-- Image registry allowlist (only approved registries)
-- Continuous vulnerability scanning with Trivy Operator
-- SLSA provenance attestation verifying build integrity
+- Attack: Compromised pod used to access and exfiltrate production databases
+- Mitigated by: Databases in private subnets with security groups (worker nodes only), credentials in external vaults, multi-AZ with backups, NetworkPolicies limiting database access
 
-### Secrets Exposure in Pod Configs
+**Control Plane / API Server Attack**
 
-**Attack**: Secrets leaked through environment variables, ConfigMaps, or insecure Kubernetes Secrets.
+- Attack: Unauthorized access to Kubernetes API to modify cluster or steal secrets
+- Mitigated by: Managed Kubernetes hardened control plane, API access restricted to VPN/bastion, RBAC with least privilege, audit logging
 
-**Mitigated by**:
+### Supply Chain & Image Security
 
-- External secrets management (AWS Secrets Manager, GCP Secret Manager, Azure Key Vault)
-- Secrets Store CSI Driver with cloud-native integrations
-- Secrets never stored in Git or Kubernetes native Secrets
-- Workload Identity / IRSA for pod authentication without static credentials
+**Supply Chain Attack via Unsigned Images**
 
-### Compromised ArgoCD / GitOps Repo
+- Attack: Malicious container images pushed to registry and deployed to production
+- Mitigated by: Registry authentication required for push/pull, Kyverno image signature verification (Cosign), image registry allowlist, Trivy Operator continuous scanning, SLSA provenance attestation
 
-**Attack**: Attackers modify GitOps repository to deploy malicious workloads or steal secrets.
+**Exploiting Known CVEs in Running Containers**
 
-**Mitigated by**:
+- Attack: Exploiting publicly disclosed vulnerabilities in outdated images
+- Mitigated by: Trivy Operator continuous scanning, alerts on HIGH/CRITICAL with patches, automated image rebuilds with Copacetic, GitOps deployment
 
-- ArgoCD deployed in separate admin cluster (isolated from production)
-- Admin access restricted to VPN/bastion only
-- Signed Git commits required for production deployments
-- RBAC limiting which teams can deploy to which namespaces
+### Secrets & Configuration
 
-### Exploiting Known CVEs in Running Containers
+**Secrets Exposure in Pod Configs**
 
-**Attack**: Attackers exploit publicly disclosed vulnerabilities in outdated container images.
+- Attack: Secrets leaked through environment variables, ConfigMaps, or insecure Kubernetes Secrets
+- Mitigated by: External secrets management (AWS/GCP/Azure vaults), Secrets Store CSI Driver, secrets never in Git/native Secrets, Workload Identity/IRSA
 
-**Mitigated by**:
+**Compromised ArgoCD / GitOps Repo**
 
-- Trivy Operator continuous scanning for new CVEs
-- Automated alerts on HIGH/CRITICAL vulnerabilities with patches
-- Automated image rebuilds via CI/CD with Copacetic patching
-- GitOps-based deployment of patched images
-
-### Malicious Runtime Behavior
-
-**Attack**: Unexpected processes spawning in containers (crypto miners, reverse shells, data exfiltration tools).
-
-**Mitigated by**:
-
-- Falco runtime detection for shell spawns, suspicious syscalls, file access
-- Monitoring for unexpected network connections
-- Alerting on process execution anomalies
-- Automatic incident response via NetworkPolicy isolation
-
-### Resource Exhaustion / DoS
-
-**Attack**: Malicious or buggy pods consuming all cluster resources, causing service outages.
-
-**Mitigated by**:
-
-- Kyverno policies requiring CPU and memory limits on all pods
-- ResourceQuotas per namespace preventing resource monopolization
-- Pod disruption budgets ensuring availability during updates
-- Auto-scaling with GKE/EKS/AKS cluster autoscaler
-
-### Database Compromise via Pod Access
-
-**Attack**: Attackers use compromised pod to access and exfiltrate production databases.
-
-**Mitigated by**:
-
-- Databases in private subnets with security groups allowing only worker nodes
-- Database credentials in external vaults, never in pod configs
-- Multi-AZ databases with automated backups and point-in-time recovery
-- Network policies limiting which pods can access database endpoints
-
-### Control Plane / API Server Attack
-
-**Attack**: Unauthorized access to Kubernetes API server to modify cluster configuration or steal secrets.
-
-**Mitigated by**:
-
-- Managed Kubernetes with hardened control plane (EKS/GKE/AKS)
-- API server access restricted to VPN/bastion only
-- RBAC with least privilege access
-- Audit logging of all API server requests
+- Attack: Modified GitOps repository to deploy malicious workloads or steal secrets
+- Mitigated by: ArgoCD in separate admin cluster, admin access restricted to VPN/bastion, signed Git commits required, RBAC limiting deployment permissions
 
 ## References
 
