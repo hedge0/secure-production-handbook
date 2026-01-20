@@ -16,7 +16,8 @@ A cloud-agnostic guide for building production-ready Kubernetes clusters with de
 8. [Infrastructure as Code & GitOps](#infrastructure-as-code--gitops)
 9. [Observability & Logging](#observability--logging)
 10. [Disaster Recovery](#disaster-recovery)
-11. [References](#references)
+11. [Incident Response](#incident-response)
+12. [References](#references)
 
 ## Overview
 
@@ -698,6 +699,68 @@ Complete disaster recovery steps:
 - Document lessons learned and update procedures
 
 **Key principle**: Infrastructure as code + GitOps + automated database backups = rapid, reproducible disaster recovery.
+
+## Incident Response
+
+Respond to security incidents in Kubernetes with structured processes for containment and recovery.
+
+### Detection & Initial Response
+
+**Automated Detection**:
+
+- **Falco**: Runtime threats (shell spawns, privilege escalation, suspicious syscalls)
+- **Prometheus**: Resource anomalies (CPU spikes, pod crashes, restart loops)
+- **Trivy Operator**: New critical vulnerabilities in running workloads
+- **Kyverno**: Policy violations
+
+**Immediate Actions for Pod Compromise**:
+
+1. **Isolate**: Apply NetworkPolicy to block all traffic to/from compromised pod
+2. **Preserve**: `kubectl logs pod-name > logs.txt` and `kubectl describe pod pod-name > details.txt`
+3. **Terminate**: Delete pod (deployment recreates clean instance)
+4. **Investigate**: Analyze logs and Falco alerts for attack vector
+
+### Containment & Recovery
+
+**Emergency Network Isolation**:
+
+Apply default-deny NetworkPolicy to prevent lateral movement:
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: emergency-lockdown
+  namespace: compromised-namespace
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+  # No rules = blocks all traffic
+```
+
+**Recovery Steps**:
+
+- Delete compromised pods (clean instances auto-recreate)
+- Rotate secrets in external vault (AWS Secrets Manager, GCP Secret Manager, Azure Key Vault)
+- Update container images if CVE was exploited
+- Deploy patches via ArgoCD (commit to Git, auto-sync)
+
+### Post-Incident
+
+**Investigation**:
+
+- Collect Falco alerts, pod logs, Kubernetes audit logs, Istio service mesh logs
+- Review ArgoCD deployment history and Git commits
+- Analyze Trivy vulnerability reports for exploited CVEs
+
+**Documentation & Improvements**:
+
+- Document timeline, attack vector, and remediation actions
+- Add Kyverno policies to prevent similar attacks
+- Update Falco rules to detect similar behaviors earlier
+- Notify per compliance requirements (GDPR: 72 hours, HIPAA: 60 days)
 
 ## References
 

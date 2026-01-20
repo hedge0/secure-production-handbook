@@ -17,7 +17,8 @@ A cloud-agnostic guide for building production-ready APIs with a practical blend
 9. [Observability & Compliance](#observability--compliance)
 10. [Performance Optimization](#performance-optimization)
 11. [API Versioning](#api-versioning)
-12. [References](#references)
+12. [Incident Response](#incident-response)
+13. [References](#references)
 
 ## Overview
 
@@ -810,6 +811,55 @@ Timeline and communication:
 2. v1 deprecated (6-12 months support)
 3. v3 released
 4. v1 removed, v2 deprecated
+
+## Incident Response
+
+Respond to security incidents quickly and effectively to minimize damage.
+
+### Detection & Initial Response
+
+**Automated Detection**:
+
+- Monitor authentication failures, rate limit violations, unusual traffic patterns
+- Alert on error rate spikes, latency increases, WAF blocks
+- Track failed login attempts (>5/minute per IP indicates brute force)
+
+**Immediate Actions**:
+
+1. **Contain**: Block attacking IPs at edge (Cloudflare, AWS WAF, Cloud Armor)
+2. **Investigate**: Use request IDs to trace attack in logs
+3. **Isolate**: Revoke compromised tokens, force password resets
+4. **Preserve**: Export logs before rotation for forensic analysis
+
+### Containment & Recovery
+
+**Emergency Measures**:
+
+- Add malicious IPs to WAF block list
+- Implement aggressive rate limiting on attacked endpoints (10-20 req/min)
+- Rotate compromised credentials (API keys, database passwords, JWT signing keys)
+- Deploy patches if vulnerability was exploited
+
+**Investigation**:
+
+- Filter logs by IP address, request ID, or user to identify attack scope
+- Analyze authentication patterns, unusual endpoint access, large response sizes
+- Determine: attack origin, methods used, data accessed, duration
+
+### Post-Incident
+
+**Documentation**:
+
+- Timeline of events with request IDs and log evidence
+- Attack vector and remediation actions taken
+- Data/systems affected and estimated impact
+
+**Improvements**:
+
+- Update WAF rules based on attack patterns observed
+- Enhance monitoring/alerting to detect similar incidents earlier
+- Patch identified vulnerabilities and strengthen security controls
+- Notify affected users per compliance requirements (GDPR, CCPA, HIPAA)
 
 ## References
 
