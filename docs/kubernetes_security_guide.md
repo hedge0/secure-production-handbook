@@ -392,6 +392,16 @@ spec:
                       -----END PUBLIC KEY-----
 ```
 
+**Additional Security Policies**:
+
+- Block hostNetwork, hostPID, hostIPC usage
+- Require pod security labels
+- Enforce image registry allowlist (only approved registries)
+- Validate required security contexts
+- Require read-only root filesystem where possible
+- Block dangerous capabilities
+- Enforce distroless or minimal base images (no package managers)
+
 **Deployment workflow**: Kyverno runs as admission controller, validates policies before pods are created, blocks non-compliant workloads automatically.
 
 ### Trivy Operator for Vulnerability Scanning
@@ -412,12 +422,27 @@ Deploy [Trivy Operator](https://github.com/aquasecurity/trivy-operator) for cont
 - Stores results as Kubernetes custom resources (VulnerabilityReports, ConfigAuditReports)
 - Integrates with Prometheus for alerting on critical vulnerabilities
 
-**Integration with logging**:
+**Scanning Strategy**:
+
+- Daily automated scans of all container images in cluster
+- Scan on new pod deployment
+- Generate vulnerability reports as Kubernetes custom resources
+- Alert on HIGH and CRITICAL vulnerabilities with available fixes
+
+**Reporting & Integration**:
 
 - Export vulnerability reports to Fluentd
+- Export scan results to Prometheus for metrics
 - Forward to external SIEM (Splunk, ELK Stack, cloud logging)
-- Alert on HIGH and CRITICAL vulnerabilities
-- Track remediation progress over time
+- Visualize in Grafana dashboards
+- Store reports in object storage (S3/GCS/Azure Blob)
+- Track vulnerability remediation over time
+
+**Automated Response**:
+
+- Trigger alerts when new CVEs discovered in running images
+- Optionally trigger automated image rebuilds via ArgoCD/CI pipeline
+- Update deployments with patched images
 
 ### Falco Runtime Security
 
@@ -426,8 +451,11 @@ Deploy [Falco](https://github.com/falcosecurity/falco) for real-time threat dete
 **What Falco detects**:
 
 - Shell spawned in container (potential breakout attempt)
-- Sensitive file access (/etc/shadow, SSH keys)
+- Unexpected process execution in containers
+- Sensitive file access (/etc/shadow, SSH keys, credentials)
+- File system modifications in read-only paths
 - Unexpected network connections
+- Network connections to unexpected destinations
 - Privilege escalation attempts
 - Container processes accessing host filesystem
 - Suspicious system calls
@@ -439,10 +467,13 @@ Deploy [Falco](https://github.com/falcosecurity/falco) for real-time threat dete
 - Zero performance impact on applications
 - Rules are customizable for your environment
 
-**Alerting**:
+**Alert Configuration**:
 
 - Forward alerts to Fluentd, then to SIEM
-- Slack/PagerDuty integration for real-time notifications
+- Send alerts to external SIEM via Fluentd
+- Integrate with Slack/PagerDuty for real-time notifications
+- Log all events for forensic analysis
+- Configure severity levels (info, warning, critical)
 - Alert on critical events only (reduce noise)
 
 ## Secrets Management
