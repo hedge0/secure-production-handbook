@@ -607,6 +607,138 @@ Use Terraform to provision and manage all cloud infrastructure as code.
 - Enable state locking to prevent concurrent modifications
 - Encrypt state at rest and maintain regular backups
 
+**Workspace Strategies:**
+
+**Option 1: Workspace-Per-Environment** (Smaller teams):
+
+- Single codebase with `terraform workspace` for dev/staging/production
+- Advantages: Less duplication, shared modules, easy to keep in sync
+- Disadvantages: Shared state file, risk of accidental cross-environment changes
+
+**Option 2: Separate State Files** (Recommended for production):
+
+- Separate directories for each environment with independent state files
+- Advantages: Complete isolation, environment-specific access controls, no cross-environment risk
+- Disadvantages: More code duplication (mitigated by modules)
+
+**Recommendation**: Use separate state files for production (`environments/production/`), workspaces acceptable for dev/staging.
+
+**Module Organization:**
+
+Organize into reusable modules to reduce duplication:
+
+```
+modules/
+├── vpc/          # VPC, subnets, NAT gateways
+├── eks-cluster/  # EKS cluster, node groups, IRSA
+└── rds-postgres/ # RDS instance, subnet group, security group
+
+environments/
+├── dev/main.tf
+├── staging/main.tf
+└── production/main.tf  # References modules
+```
+
+**Sensitive Data Handling:**
+
+- Mark sensitive outputs: `sensitive = true` (prevents console display, still in state)
+- Encrypt state files: Use KMS keys for S3/GCS/Azure backend encryption
+- Restrict state access: Least-privilege IAM policies for state bucket/table
+- Never commit secrets: Use vault references, not hardcoded values
+
+**Drift Detection:**
+
+Infrastructure drift occurs when manual changes bypass Terraform:
+
+```bash
+# Detect drift
+terraform plan -detailed-exitcode  # Exit code 2 = drift detected
+
+# Automated daily drift detection in CI/CD
+- name: Drift Detection
+  run: terraform plan -no-color -detailed-exitcode
+  continue-on-error: true  # Alert but don't fail
+```
+
+**Remediation**: Import manual changes (`terraform import`), revert with `terraform apply`, or update Terraform to match reality.
+
+**Team Collaboration:**
+
+**Pull Request Workflow:**
+
+1. Developer creates branch and modifies `.tf` files
+2. CI/CD runs validation: `terraform fmt -check`, `terraform validate`, `terraform plan`
+3. Team reviews plan output in PR comments
+4. Approval: 1 for dev/staging, 2 for production (1 from security)
+5. Merge triggers `terraform apply` (auto for dev/staging, manual for production)
+
+**RBAC**: Developers can plan (read-only), SRE/DevOps can apply with approval, security team has audit access.
+
+**Cost Estimation:**
+
+Use Infracost to preview cost impact before applying:
+
+```yaml
+- name: Run Infracost
+  run: infracost breakdown --path . --format json
+# Example output: Monthly cost change: +$653 (m5.xlarge + db.r5.2xlarge)
+```
+
+**Testing:**
+
+- **Pre-apply**: `terraform validate`, `tfsec` (security scan), `checkov` (policy-as-code)
+- **Preview environments**: Create temporary workspace to test major changes
+- **Integration tests**: Terratest for module validation
+
+**Provider Version Management:**
+
+```hcl
+terraform {
+  required_version = ">= 1.5.0"
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.0"  # Allow 5.x, block 6.0 breaking changes
+    }
+  }
+}
+```
+
+Upgrade process: Test in dev → review changelog → staging → production with maintenance window.
+
+**Disaster Recovery:**
+
+**State File Corruption/Deletion:**
+
+1. Enable S3 versioning on state bucket (required)
+2. Automated daily backups to separate bucket
+3. Cross-region replication for critical state
+4. Recovery: Restore from version history or backup
+
+**Accidental Destroy:**
+
+- Prevention: `lifecycle { prevent_destroy = true }` on critical resources
+- Recovery: Restore from backup, re-import resources with `terraform import`
+
+**Backup Automation:**
+
+```bash
+#!/bin/bash
+# Daily state backup
+for ENV in dev staging production; do
+  aws s3 cp s3://terraform-state/$ENV/terraform.tfstate \
+    s3://terraform-state-backup/$ENV/terraform.tfstate.$(date +%Y%m%d)
+done
+```
+
+**Key Takeaways:**
+
+- Use separate state files for production with strict access controls
+- Implement automated drift detection to catch manual changes
+- Require code reviews and approvals for all infrastructure changes
+- Maintain comprehensive state file backups with version history
+- Practice disaster recovery procedures quarterly
+
 ### ArgoCD for GitOps
 
 Deploy ArgoCD in admin cluster to manage application deployments to production cluster.
@@ -911,9 +1043,27 @@ Complete disaster recovery steps:
 
 1. Provision infrastructure with Terraform (30-60 minutes)
 2. Restore databases from snapshots to new instances (15-30 minutes)
-3. Deploy ArgoCD to new admin cluster (5 minutes)
-4. ArgoCD syncs all applications to new production cluster (10-20 minutes)
-5. Update DNS to point to new load balancers (5 minutes + TTL propagation)
+3. **Emergency Secret Rotation** (if compromise suspected): Rotate all secrets in vault (5-10 minutes)
+   - Generate new database passwords, API keys, service account credentials
+   - Update in external vault (AWS Secrets Manager, GCP Secret Manager, Azure Key Vault)
+   - Secrets Store CSI Driver automatically syncs new secrets to pods on restart
+4. Deploy ArgoCD to new admin cluster (5 minutes)
+5. ArgoCD syncs all applications to new production cluster (10-20 minutes)
+6. Update DNS to point to new load balancers (5 minutes + TTL propagation)
+
+**Emergency Secret Rotation (when compromise suspected):**
+
+```bash
+# Rotate database password
+NEW_PASSWORD=$(openssl rand -base64 32)
+aws rds modify-db-instance --db-instance-identifier prod-db --master-user-password "$NEW_PASSWORD" --apply-immediately
+aws secretsmanager update-secret --secret-id production/database/password --secret-string "$NEW_PASSWORD"
+
+# Rotate API keys and service account credentials
+# Update vault, then restart pods: kubectl rollout restart deployment -n production
+```
+
+**Validation**: Check pod status (`kubectl get pods`), authentication logs, database connectivity. Remove old secrets after 24-hour grace period.
 
 **Total RTO**: 60-120 minutes  
 **RPO**: 5 minutes (database point-in-time recovery)

@@ -182,7 +182,7 @@ Build production container image using multi-stage Dockerfile that progressively
 
 ### Stage 4: Application Testing
 
-Verify the patched and compressed image functions correctly before security scanning.
+Verify the patched and compressed image functions correctly before security scanning. Testing validates the build pipeline produced a working, secure image.
 
 **Test Categories**:
 
@@ -193,6 +193,60 @@ Verify the patched and compressed image functions correctly before security scan
 - **Integration**: Startup/shutdown, port binding, volumes, signal handling
 
 **Implementation**: Create `test.sh` in repository with comprehensive, fast tests using exit codes and clear error messages.
+
+**Example Test Script Structure:**
+
+```bash
+#!/bin/bash
+set -e
+IMAGE_NAME=$1
+
+# Test 1: Binary functionality
+VERSION=$(docker run --rm --entrypoint /path/to/binary "$IMAGE_NAME" --version)
+if [[ ! "$VERSION" =~ expected_pattern ]]; then exit 1; fi
+
+# Test 2: Non-root user verification
+USER_ID=$(docker run --rm --entrypoint id "$IMAGE_NAME" -u)
+if [ "$USER_ID" = "0" ]; then exit 1; fi
+
+# Test 3: Missing library dependencies
+MISSING_LIBS=$(docker run --rm "$IMAGE_NAME" sh -c 'ldd /path/to/binary 2>/dev/null | grep "not found"')
+if [ -n "$MISSING_LIBS" ]; then exit 1; fi
+
+# Test 4: Container startup and HTTP response (web services)
+CONTAINER_ID=$(docker run -d -p 8080:80 "$IMAGE_NAME")
+sleep 5
+HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/)
+docker rm -f "$CONTAINER_ID"
+if [ "$HTTP_CODE" != "200" ]; then exit 1; fi
+```
+
+**Security-Specific Tests:**
+
+- Package managers removed: `docker run --rm "$IMAGE_NAME" sh -c "apt --version 2>&1" | grep "not found"`
+- Non-root enforcement: Verify UID is not 0
+- No secrets in environment: Check `docker run --rm --entrypoint env "$IMAGE_NAME"` for sensitive patterns
+- Read-only filesystem works (if applicable): `docker run --rm --read-only "$IMAGE_NAME" sh -c "touch /test"`
+
+**Test Frameworks by Language:**
+
+- **Shell scripts** (recommended): Portable, no dependencies, works with any image
+- **Python pytest**: Complex validation logic, API testing with `docker-py` and `requests` libraries
+- **Go testing**: Fast compiled tests with `testcontainers-go` for container lifecycle
+- **Node.js Jest**: JavaScript apps with `dockerode` for Docker interaction
+
+**Best Practices:**
+
+- Fast-fail: Exit immediately on first failure
+- Timeouts: Each test max 30-60 seconds to prevent hanging
+- Clear errors: Include expected vs actual, container logs on failure
+- Keep tests simple: Sequential execution is fine for 15-30 tests (~2-3 minutes total)
+
+**Test Coverage Targets:**
+
+- **Minimum**: Basic + runtime security + dependencies (~10-15 tests, ~1 minute)
+- **Recommended**: Above + application-specific + security tests (~20-30 tests, ~2-3 minutes)
+- **Comprehensive**: Above + integration + performance (~40-50 tests, ~5-8 minutes)
 
 **Failure Handling**: Stop pipeline immediately, log failure details, preserve failed image for debugging, notify team.
 

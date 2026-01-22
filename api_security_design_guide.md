@@ -1403,7 +1403,7 @@ az keyvault set-policy --name prod-keyvault --object-id PRINCIPAL_ID --secret-pe
 - Azure: Use managed identity
 - Never store credentials in environment variables or config files
 
-### Service Account Best Practices
+### Service Account Management
 
 **Scope and Separation**:
 
@@ -1417,6 +1417,85 @@ az keyvault set-policy --name prod-keyvault --object-id PRINCIPAL_ID --secret-pe
 - Restrict to specific resources (exact ARNs, paths, buckets)
 - Use IAM conditions (IP restrictions, time-based, request attributes)
 - Audit and remove unused permissions quarterly
+
+**Lifecycle Management:**
+
+Prevent accumulation of unused, over-privileged, or compromised accounts through rigorous lifecycle controls.
+
+**Creation Process:**
+
+1. Developer requests with justification (application name, required permissions, environment)
+2. Security team reviews for least privilege and naming compliance
+3. Provision via Infrastructure as Code (Terraform) with auto-tagging
+4. Document in service account registry (owner, permissions, applications, last reviewed)
+
+**Rotation Procedures (Long-Lived Credentials):**
+
+While workload identity/IAM roles use temporary credentials, service account keys require rotation:
+
+- **Schedule**: Every 90 days (compliance: PCI-DSS, SOC2, ISO 27001)
+- **Immediate**: Suspected compromise, employee departure, key leakage
+
+**Zero-Downtime Rotation:**
+
+1. Generate new key and deploy to 10% of instances (canary)
+2. Monitor for authentication errors
+3. Roll out to remaining 90%, keep old key active (12-24 hour overlap)
+4. Validate all services using new credentials
+5. Disable old key after 24 hours, delete after confirmation
+
+**Monitoring for Compromise:**
+
+Set up automated alerts for suspicious patterns:
+
+- **Geographic anomalies**: Access from unexpected countries/regions
+- **Time anomalies**: Activity outside normal business hours (3 AM when no deployments occur)
+- **Excessive API calls**: 10x normal volume indicates data exfiltration or misconfiguration
+- **Failed authentication**: >5 attempts in 10 minutes suggests brute force
+- **Permission escalation**: Attempts to access resources outside granted permissions
+
+**Detection Example (AWS CloudTrail):**
+
+```python
+# Monitor AssumeRole events for anomalies
+def detect_anomalies():
+    events = cloudtrail.lookup_events(
+        LookupAttributes=[{'AttributeKey': 'EventName', 'AttributeValue': 'AssumeRole'}],
+        StartTime=datetime.now() - timedelta(hours=1)
+    )
+
+    for event in events:
+        source_ip = event.get('SourceIPAddress')
+        if not is_expected_ip(source_ip):
+            alert_security_team(f"Anomalous access from {source_ip}")
+```
+
+**Service Accounts vs Workload Identity:**
+
+| Feature         | Service Account Keys | Workload Identity (IAM Roles) |
+| --------------- | -------------------- | ----------------------------- |
+| Rotation        | Manual, 90 days      | Automatic, 15-60 min          |
+| Compromise Risk | High (long-lived)    | Low (temporary)               |
+| Leakage Risk    | High (keys in logs)  | None (no keys)                |
+| Use Case        | Cross-cloud, CI/CD   | Cloud-native apps             |
+
+**Recommendation**: Always prefer workload identity (AWS IRSA, GKE Workload Identity, AKS Managed Identity) over service account keys when available. Use keys only when workload identity is not an option.
+
+**Governance Policies:**
+
+- **Approval**: Production service accounts require security team sign-off
+- **Tagging**: Enforce tags (Owner, Environment, Purpose, CreatedDate, LastReviewed)
+- **Quarterly audits**: Review all accounts, remove unused, tighten overly permissive policies
+- **Auto-deactivation**: Service accounts inactive >90 days automatically disabled
+- **Key limits**: Maximum 2 active keys per account (current + rotation overlap)
+
+**Decommissioning Process:**
+
+1. Disable (set Inactive status, don't delete)
+2. Monitor for authentication failures over 7 days
+3. Confirm no applications still using account
+4. Delete service account and all keys/credentials
+5. Update registry with decommission date and reason
 
 ### Secrets Retrieval Patterns
 
