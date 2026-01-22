@@ -24,6 +24,13 @@ A curated list of useful open-source GitHub projects organized by category
 - [Tailwind CSS](https://github.com/tailwindlabs/tailwindcss) - Utility-first CSS framework that provides low-level utility classes for building custom designs without writing custom CSS.
 - [Swagger UI](https://github.com/swagger-api/swagger-ui) - Interactive API documentation tool that automatically generates a visual interface for exploring and testing REST APIs from OpenAPI specifications.
 
+## Validation & Schema Libraries
+
+- [Zod](https://github.com/colinhacks/zod) - TypeScript-first schema validation with static type inference and runtime type checking for building type-safe applications.
+- [Joi](https://github.com/hapijs/joi) - Powerful schema description and data validation for JavaScript with support for complex validation rules and custom error messages.
+- [Pydantic](https://github.com/pydantic/pydantic) - Data validation using Python type annotations with automatic data parsing and serialization for APIs and data models.
+- [go-playground/validator](https://github.com/go-playground/validator) - Go struct and field validation with tag-based rules supporting cross-field validation and custom validators.
+
 ## Databases & Data Storage
 
 - [PostgreSQL](https://github.com/postgres/postgres) - Advanced open-source relational database system known for reliability, feature robustness, and support for both SQL and JSON querying.
