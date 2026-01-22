@@ -456,6 +456,17 @@ cors({
 
 ### Authentication & Authorization
 
+Choose the authentication method that matches your API's security requirements and integration needs.
+
+| Method                      | Use Case                          | Pros                                                    | Cons                                             | Implementation Complexity |
+| --------------------------- | --------------------------------- | ------------------------------------------------------- | ------------------------------------------------ | ------------------------- |
+| **JWT (RS256)**             | User authentication, session mgmt | Stateless, self-contained, widely supported             | Revocation difficult, token size, key management | Medium                    |
+| **API Keys**                | Service-to-service, public APIs   | Simple, fast validation, easy rotation                  | No user context, long-lived, theft risk          | Low                       |
+| **OAuth 2.0 + OIDC**        | Third-party integrations, SSO     | Industry standard, delegated auth, user consent         | Complex flow, token refresh, requires IdP        | High                      |
+| **mTLS (Mutual TLS)**       | Service mesh, internal services   | Strong cryptographic auth, no token theft               | Certificate management, client setup complexity  | High                      |
+| **HMAC Signatures**         | Webhooks, API request signing     | Request integrity, replay protection, no shared secrets | Clock sync required, complex implementation      | Medium                    |
+| **Basic Auth (deprecated)** | Legacy systems only               | Simple                                                  | Credentials in every request, no expiration      | Low (avoid)               |
+
 **OAuth/JWT Token Validation**:
 
 Validate authentication tokens on every protected endpoint:
