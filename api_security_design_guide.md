@@ -30,8 +30,10 @@ A cloud-agnostic guide for building production-ready APIs with a practical blend
    - [CORS Configuration](#cors-configuration)
    - [Authentication & Authorization](#authentication--authorization)
    - [JWT Validation Checklist](#jwt-validation-checklist)
+   - [Modern Authentication Patterns](#modern-authentication-patterns)
 7. [Data Security & Input Validation](#data-security--input-validation)
    - [Data Encryption at Rest](#data-encryption-at-rest)
+   - [Field-Level Encryption for PII/PHI](#field-level-encryption-for-piiphi)
    - [Encryption in Transit & TLS Requirements](#encryption-in-transit--tls-requirements)
    - [Request Validation](#request-validation)
    - [Input Sanitization](#input-sanitization)
@@ -452,6 +454,145 @@ function validateToken(token) {
 
 **Test your validation:** Try using an expired token, wrong audience, or tampered signature - all should be rejected.
 
+### Modern Authentication Patterns
+
+Implement secure authentication flows beyond basic JWT validation for production-grade systems.
+
+**OAuth 2.1 / OIDC Flow** (recommended for APIs):
+
+```
+1. Client redirects to auth server (e.g., Auth0, AWS Cognito)
+2. User authenticates → Auth server issues authorization code
+3. Client exchanges code for tokens:
+   - Access token (short-lived, 15 min): API access
+   - Refresh token (long-lived, 7-30 days): Get new access tokens
+   - ID token (OIDC): User identity claims
+4. Client calls API with access token in Authorization header
+5. When access token expires, use refresh token to get new access token
+```
+
+**Refresh Token Rotation** (prevents token theft):
+
+```javascript
+// Token refresh endpoint
+app.post("/auth/refresh", async (req, res) => {
+  const { refresh_token } = req.body;
+
+  // Validate refresh token
+  const session = await validateRefreshToken(refresh_token);
+  if (!session) return res.status(401).json({ error: "Invalid token" });
+
+  // Issue new access + refresh tokens
+  const newAccessToken = generateAccessToken(session.userId);
+  const newRefreshToken = generateRefreshToken(session.userId);
+
+  // Invalidate old refresh token (one-time use)
+  await revokeRefreshToken(refresh_token);
+
+  res.json({
+    access_token: newAccessToken,
+    refresh_token: newRefreshToken,
+    expires_in: 900, // 15 minutes
+  });
+});
+```
+
+**Session Management Best Practices:**
+
+- **Token storage**: Store refresh tokens in httpOnly cookies (not localStorage - vulnerable to XSS)
+- **Session tracking**: Store active sessions in Redis with user ID, device info, IP, last activity
+- **Concurrent sessions**: Limit to 3-5 active sessions per user, revoke oldest when exceeded
+- **Session timeout**: Absolute timeout (7 days) + idle timeout (30 min of inactivity)
+- **Logout**: Revoke both access and refresh tokens, clear server-side session
+
+**Multi-Factor Authentication (MFA):**
+
+```javascript
+// After password validation, require MFA
+if (user.mfa_enabled) {
+  // Send TOTP code via authenticator app or SMS
+  const mfaToken = generateMFAToken(user.id);
+
+  return res.json({
+    requires_mfa: true,
+    mfa_token: mfaToken, // Temporary token to validate MFA
+  });
+}
+
+// MFA verification endpoint
+app.post("/auth/verify-mfa", async (req, res) => {
+  const { mfa_token, code } = req.body;
+
+  const userId = await validateMFAToken(mfa_token);
+  const isValid = await verifyTOTP(userId, code);
+
+  if (!isValid) return res.status(401).json({ error: "Invalid code" });
+
+  // Issue full access + refresh tokens after MFA
+  const tokens = generateTokens(userId);
+  res.json(tokens);
+});
+```
+
+**Passwordless Authentication (WebAuthn/FIDO2):**
+
+Modern alternative to passwords using hardware security keys or biometrics:
+
+- Phishing-resistant (cryptographic challenge-response)
+- No password storage/management required
+- Works with browser WebAuthn API or mobile biometrics
+- Implement using libraries: SimpleWebAuthn (Node.js), py_webauthn (Python)
+
+**Account Lockout & Brute Force Protection:**
+
+```javascript
+// Track failed login attempts (Redis)
+const attempts = await redis.incr(`login:attempts:${email}`);
+await redis.expire(`login:attempts:${email}`, 600); // 10 min window
+
+if (attempts > 5) {
+  // Lock account for 15 minutes
+  await redis.setex(`login:locked:${email}`, 900, "1");
+  return res.status(429).json({
+    error: "Too many failed attempts. Try again in 15 minutes.",
+  });
+}
+
+// On successful login, reset attempts
+await redis.del(`login:attempts:${email}`);
+```
+
+**Token Revocation:**
+
+Implement token blacklist for immediate logout (important for security incidents):
+
+```javascript
+// Revoke token on logout
+app.post("/auth/logout", async (req, res) => {
+  const token = req.headers.authorization?.split(" ")[1];
+  const decoded = jwt.decode(token);
+
+  // Add to blacklist until token would naturally expire
+  const ttl = decoded.exp - Math.floor(Date.now() / 1000);
+  await redis.setex(`blacklist:${token}`, ttl, "1");
+
+  res.json({ message: "Logged out successfully" });
+});
+
+// Middleware to check blacklist
+async function checkBlacklist(req, res, next) {
+  const token = req.headers.authorization?.split(" ")[1];
+  const isBlacklisted = await redis.exists(`blacklist:${token}`);
+
+  if (isBlacklisted) {
+    return res.status(401).json({ error: "Token revoked" });
+  }
+  next();
+}
+```
+
+Combine these patterns for defense-in-depth: short-lived access tokens + refresh rotation + MFA + session limits + blacklist capability.
+
 ## Data Security & Input Validation
 
 Protect sensitive data at rest and prevent injection attacks through comprehensive validation and sanitization.
@@ -488,6 +629,87 @@ Encrypt sensitive fields in application code before writing to database using AE
 - Zero-trust requirements (don't trust cloud admins or DBAs)
 - Multi-tenant SaaS with customer-managed encryption keys
 - Regulatory requirements for end-to-end encryption
+
+### Field-Level Encryption for PII/PHI
+
+Encrypt individual sensitive fields in your database to protect against application compromise, insider threats, and credential breaches where database-level encryption is insufficient.
+
+**When to use field-level encryption:**
+
+- PII: Names, addresses, SSNs, emails, phone numbers
+- PHI: Medical records, diagnoses, prescriptions
+- PCI: Credit card numbers, CVV codes
+- Compliance requirements (GDPR, HIPAA, PCI-DSS) mandating data protection beyond database encryption
+
+**Envelope Encryption Pattern** (industry standard):
+
+```
+User Data → Encrypt with Data Encryption Key (DEK)
+DEK → Encrypt with Key Encryption Key (KEK) from KMS
+Store: Encrypted data + Encrypted DEK
+```
+
+**Implementation example (Python with AWS KMS):**
+
+```python
+import boto3
+import base64
+from cryptography.fernet import Fernet
+
+kms = boto3.client('kms')
+
+def encrypt_field(plaintext, kms_key_id):
+    # Generate data encryption key
+    response = kms.generate_data_key(KeyId=kms_key_id, KeySpec='AES_256')
+    plaintext_key = response['Plaintext']
+    encrypted_key = response['CiphertextBlob']
+
+    # Encrypt data with DEK
+    cipher = Fernet(base64.urlsafe_b64encode(plaintext_key[:32]))
+    encrypted_data = cipher.encrypt(plaintext.encode())
+
+    # Store both encrypted data and encrypted DEK
+    return {
+        'encrypted_data': base64.b64encode(encrypted_data).decode(),
+        'encrypted_key': base64.b64encode(encrypted_key).decode()
+    }
+
+def decrypt_field(encrypted_data, encrypted_key):
+    # Decrypt DEK using KMS
+    response = kms.decrypt(CiphertextBlob=base64.b64decode(encrypted_key))
+    plaintext_key = response['Plaintext']
+
+    # Decrypt data with DEK
+    cipher = Fernet(base64.urlsafe_b64encode(plaintext_key[:32]))
+    return cipher.decrypt(base64.b64decode(encrypted_data)).decode()
+```
+
+**Cloud KMS options:**
+
+- AWS: KMS with envelope encryption, automatic key rotation
+- GCP: Cloud KMS with customer-managed encryption keys (CMEK)
+- Azure: Key Vault for key management and encryption operations
+
+**Key considerations:**
+
+- **Performance**: Encrypt only necessary fields (SSN, credit cards), not entire records
+- **Searchability**: Encrypted fields cannot be queried/indexed - use searchable encryption libraries or hash indexes for lookup
+- **Key rotation**: Rotate KEK annually, re-encrypt DEKs (data re-encryption not required with envelope pattern)
+- **Access control**: Restrict KMS key permissions to application service accounts only
+
+**Database schema example:**
+
+```sql
+CREATE TABLE users (
+    id UUID PRIMARY KEY,
+    email VARCHAR(255),  -- Not encrypted (needed for login)
+    ssn_encrypted TEXT,  -- Encrypted SSN
+    ssn_dek_encrypted TEXT,  -- Encrypted data key for SSN
+    created_at TIMESTAMP
+);
+```
+
+This pattern provides defense-in-depth: even if attackers gain database access, they cannot decrypt sensitive fields without KMS access.
 
 ### Encryption in Transit & TLS Requirements
 
