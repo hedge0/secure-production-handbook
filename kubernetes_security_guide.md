@@ -1,6 +1,6 @@
 # Kubernetes Security Architecture Guide
 
-**Last Updated:** January 21, 2026
+**Last Updated:** January 22, 2026
 
 A cloud-agnostic guide for building production-ready Kubernetes clusters with defense-in-depth security, high availability, and disaster recovery. This guide includes industry best practices and lessons learned from real-world production implementations.
 
@@ -101,38 +101,22 @@ This guide outlines a production-grade Kubernetes architecture that prioritizes 
 
 ### External Services
 
-**Managed Kubernetes** (strongly recommended):
+Cloud-agnostic service options for Kubernetes, databases, secrets, logging, and load balancing.
 
-- AWS Elastic Kubernetes Service (EKS)
-- Google Kubernetes Engine (GKE)
-- Azure Kubernetes Service (AKS)
+| Service Category                     | AWS                              | GCP                                | Azure                           | Self-Hosted / Open Source |
+| ------------------------------------ | -------------------------------- | ---------------------------------- | ------------------------------- | ------------------------- |
+| **Managed Kubernetes** (recommended) | Elastic Kubernetes Service (EKS) | Google Kubernetes Engine (GKE)     | Azure Kubernetes Service (AKS)  | -                         |
+| **Managed Databases** (required)     | RDS (PostgreSQL, MySQL, Aurora)  | Cloud SQL                          | Database for PostgreSQL/MySQL   | -                         |
+| **Secrets Management** (required)    | Secrets Manager                  | Secret Manager                     | Key Vault                       | HashiCorp Vault           |
+| **Logging & SIEM** (required)        | CloudWatch Logs                  | Cloud Logging                      | Monitor                         | Splunk, ELK Stack, Loki   |
+| **Load Balancing & WAF**             | ALB + AWS WAF                    | Cloud Load Balancing + Cloud Armor | Application Gateway + Azure WAF | -                         |
 
-**Managed Databases** (required for production):
+**Notes:**
 
-- AWS RDS (PostgreSQL, MySQL, Aurora)
-- GCP Cloud SQL
-- Azure Database for PostgreSQL/MySQL
-
-**Secrets Management** (required):
-
-- AWS Secrets Manager
-- GCP Secret Manager
-- Azure Key Vault
-- HashiCorp Vault
-
-**Logging & SIEM** (required):
-
-- AWS CloudWatch Logs
-- GCP Cloud Logging
-- Azure Monitor
-- Splunk
-- Self-hosted (ELK Stack, Loki)
-
-**Load Balancing & WAF**:
-
-- AWS ALB + AWS WAF
-- GCP Cloud Load Balancing + Cloud Armor
-- Azure Application Gateway + Azure WAF
+- **Managed Kubernetes**: Strongly recommended over self-hosted - reduces operational burden and improves security
+- **Managed Databases**: Required for production - never run databases in Kubernetes for production workloads
+- **Secrets Management**: Required for secure credential storage and rotation
+- **Load Balancing & WAF**: Essential for edge security and DDoS protection
 
 ## 3. Network Architecture & Database Layer
 
@@ -140,25 +124,28 @@ Design secure network topology with proper isolation and managed databases for p
 
 ### Network Design
 
-**Private Subnets** (Recommended):
+Choose between private and public subnets based on your security requirements and budget constraints.
 
-- Kubernetes worker nodes in private subnets (no direct internet access)
-- Egress via NAT Gateway (monthly cost per AZ + data transfer fees)
-- Load balancers in public subnets
-- Multi-AZ NAT Gateway setup multiplies cost (3 AZs = 3x fees)
-- Prevents direct exposure of cluster nodes
+| Aspect                 | Private Subnets                               | Public Subnets                          |
+| ---------------------- | --------------------------------------------- | --------------------------------------- |
+| **Worker Node Access** | No direct internet access                     | Public IP addresses                     |
+| **Egress Method**      | NAT Gateway required                          | Direct egress                           |
+| **Monthly Cost**       | $32-45 per AZ + data transfer fees            | $0 (no NAT Gateway)                     |
+| **Multi-AZ Cost**      | 3 AZs = 3x NAT Gateway fees (~$100-135/month) | $0                                      |
+| **Security Level**     | Excellent - nodes fully isolated              | Good - requires strict security groups  |
+| **Attack Surface**     | Minimal - no public IPs                       | Higher - nodes have public IPs          |
+| **Best For**           | Production environments                       | Budget-constrained or non-critical apps |
 
-**Public Subnets** (Budget Alternative):
+**Recommendation:** Use private subnets with NAT Gateway for production - the cost is negligible compared to security benefits.
+
+**Public Subnet Configuration** (if chosen):
 
 - Worker nodes in public subnets with strict security groups
 - Allow only: ALB traffic, specific admin IPs/VPN
 - Block all other inbound traffic
-- No NAT Gateway cost
-- **Risk**: Worker nodes have public IPs, requires careful security group configuration
+- **Risk**: Requires careful security group configuration to prevent exposure
 
-**Recommendation**: Use private subnets with NAT Gateway for production - cost is negligible vs security benefit.
-
-**Multi-AZ Design**:
+**Multi-AZ Design** (applies to both):
 
 - Distribute worker nodes across 3 AZs minimum
 - Managed Kubernetes control plane automatically multi-AZ
@@ -844,7 +831,15 @@ Deploy in admin cluster for metrics collection and visualization.
 
 - S3 Glacier, GCS Coldline/Archive, Azure Archive
 - Compressed logs for regulatory compliance
-- Retention: SOC2 (1-7 years), ISO 27001 (1-3 years), HIPAA (6 years), GDPR (1-3 years)
+
+**Retention Requirements by Compliance Standard:**
+
+| Compliance Standard | Retention Period | Scope                                              |
+| ------------------- | ---------------- | -------------------------------------------------- |
+| **SOC2**            | 1-7 years        | Audit logs, access logs, security events           |
+| **ISO 27001**       | 1-3 years        | Security logs, incident records                    |
+| **HIPAA**           | 6 years          | PHI access logs, audit trails                      |
+| **GDPR**            | 1-3 years        | Personal data access logs (with right to deletion) |
 
 **Archive Process**:
 

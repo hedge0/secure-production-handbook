@@ -1,6 +1,6 @@
 # API Security Design Guide
 
-**Last Updated:** January 21, 2026
+**Last Updated:** January 22, 2026
 
 A cloud-agnostic guide for building production-ready APIs with a practical blend of security and performance. This guide includes industry best practices and lessons learned from real-world implementations across serverless and traditional architectures.
 
@@ -120,40 +120,22 @@ This guide outlines a production-grade API design approach that balances securit
 
 ### External Services
 
-**Secrets Management** (required - choose one):
+Cloud-agnostic service options for secrets management, logging, storage, and edge protection.
 
-- AWS Secrets Manager
-- GCP Secret Manager
-- Azure Key Vault
-- HashiCorp Vault
+| Service Category                  | AWS                               | GCP                                | Azure                                    | Self-Hosted / Open Source              |
+| --------------------------------- | --------------------------------- | ---------------------------------- | ---------------------------------------- | -------------------------------------- |
+| **Secrets Management** (required) | Secrets Manager                   | Secret Manager                     | Key Vault                                | HashiCorp Vault                        |
+| **Logging & SIEM** (required)     | CloudWatch Logs                   | Cloud Logging                      | Monitor                                  | Splunk, ELK Stack, Loki                |
+| **Cold Storage** (compliance)     | S3 Glacier / Glacier Deep Archive | Coldline Storage / Archive Storage | Cool Blob Storage / Archive Blob Storage | -                                      |
+| **Edge Protection** (required)    | CloudFront + AWS WAF              | Cloud Armor + Cloud CDN            | Front Door + Azure WAF                   | Cloudflare (Free tier with WAF + DDoS) |
+| **Rate Limiting State**           | DynamoDB                          | Firestore                          | Cosmos DB                                | Redis (any cloud or self-hosted)       |
 
-**Logging & SIEM** (required - choose one):
+**Notes:**
 
-- AWS CloudWatch Logs
-- GCP Cloud Logging
-- Azure Monitor
-- Splunk
-- Self-hosted (ELK Stack, Loki)
-
-**Cold Storage** (required for compliance):
-
-- AWS S3 Glacier / S3 Glacier Deep Archive
-- GCP Coldline Storage / Archive Storage
-- Azure Cool Blob Storage / Archive Blob Storage
-
-**Edge Protection** (required - choose one):
-
-- Cloudflare (Free tier available with WAF + DDoS protection)
-- AWS CloudFront + AWS WAF
-- GCP Cloud Armor + Cloud CDN
-- Azure Front Door + Azure WAF
-
-**Rate Limiting State Storage** (choose one):
-
-- Redis (any cloud or self-hosted)
-- AWS DynamoDB
-- GCP Firestore
-- Azure Cosmos DB
+- **Secrets Management**: Required for storing API keys, database credentials, and sensitive configuration
+- **Cold Storage**: Required for multi-year log retention to meet compliance standards (SOC2, HIPAA, GDPR)
+- **Edge Protection**: Cloudflare works across all cloud providers and offers free tier with basic WAF + DDoS protection
+- **Rate Limiting State**: Redis is recommended for fastest performance and works with any cloud provider
 
 ## 3. Architecture Patterns
 
@@ -400,20 +382,23 @@ Deploy WAF and DDoS protection at the edge to filter malicious traffic before it
 
 ### Cloudflare vs Cloud-Native WAF
 
-**Cloudflare**:
+Choose between Cloudflare's multi-cloud solution or cloud-native WAF based on your deployment strategy.
 
-- Free tier with DDoS protection and basic WAF rules
-- Global CDN with edge caching
-- Easy DNS-based setup
-- **Risk**: Dual-cloud dependency (Cloudflare OR cloud provider down = service down)
+| Feature                 | Cloudflare                                      | Cloud-Native (AWS/GCP/Azure)                     |
+| ----------------------- | ----------------------------------------------- | ------------------------------------------------ |
+| **Cost**                | Free tier available with basic WAF + DDoS       | Pay per rule + per request                       |
+| **Multi-Cloud Support** | Works across all cloud providers                | Locked to single provider                        |
+| **Failure Dependency**  | Separate service (additional point of failure)  | Single cloud dependency (no dual failure risk)   |
+| **Cloud Integration**   | Generic HTTP/DNS integration                    | Native integration with cloud services           |
+| **Setup Complexity**    | Simple DNS change                               | Requires cloud-specific configuration            |
+| **Best For**            | Multi-cloud deployments, budget-conscious teams | Single cloud commitment, tight integration needs |
 
-**Cloud-Native** (AWS WAF + CloudFront, GCP Cloud Armor, Azure Front Door):
+**Recommendation:**
 
-- Single cloud provider reduces failure points
-- Native integration with cloud services
-- **Advantage**: If cloud goes down, entire stack fails together (not twice the failure risk)
+- **Use Cloudflare** if you're multi-cloud, need a free tier, or want flexibility to change cloud providers
+- **Use Cloud-Native** if you're committed to a single cloud provider and want native service integration
 
-**Recommendation**: Cloud-native if committed to single provider, Cloudflare for multi-cloud or free tier.
+**Key Insight:** Cloud-native WAF means if your cloud provider goes down, your entire stack fails together (not twice the failure risk from having two separate services).
 
 ### Origin IP Restriction (Critical)
 
@@ -977,22 +962,25 @@ Store rate limit counters in distributed storage with atomic increment operation
 
 ### Rate Limiting Patterns
 
-**Per-User Limits** (by tier):
+Implement different rate limiting strategies based on user tier, endpoint sensitivity, and authentication status.
 
-- Free: 100 requests/hour
-- Pro: 1,000 requests/hour
-- Enterprise: 10,000+ requests/hour
+| Pattern Type                   | Limits                | Use Case                               | Enforcement Level  |
+| ------------------------------ | --------------------- | -------------------------------------- | ------------------ |
+| **Per-User (Free Tier)**       | 100 req/hour          | Rate limit by subscription tier        | Application layer  |
+| **Per-User (Pro Tier)**        | 1,000 req/hour        | Paid tier gets higher limits           | Application layer  |
+| **Per-User (Enterprise)**      | 10,000+ req/hour      | Custom limits for enterprise customers | Application layer  |
+| **Endpoint: /login**           | 5 req/min             | Brute force prevention                 | Application layer  |
+| **Endpoint: /password-reset**  | 3 req/hour            | Abuse prevention                       | Application layer  |
+| **Endpoint: /search**          | 100 req/min           | Expensive operations protection        | Application layer  |
+| **Endpoint: /profile**         | 1,000 req/min         | Cheap read operations                  | Application layer  |
+| **IP-Based (Unauthenticated)** | 1,000 req/hour per IP | DDoS mitigation for public endpoints   | Edge + Application |
 
-**Endpoint-Specific Limits**:
+**Implementation Notes:**
 
-- `/login`: 5 requests/minute (brute force prevention)
-- `/password-reset`: 3 requests/hour (abuse prevention)
-- `/search`: 100 requests/minute (expensive operations)
-- `/profile`: 1,000 requests/minute (cheap reads)
-
-**IP-Based Limits**:
-
-- 1,000 requests/hour per IP for unauthenticated endpoints
+- **Per-User limits**: Enforced after authentication, uses user ID as rate limit key
+- **Endpoint-Specific limits**: Stack with per-user limits (e.g., Pro user hitting /login still limited to 5/min)
+- **IP-Based limits**: Apply to unauthenticated endpoints as first line of defense
+- **State Storage**: Use Redis/DynamoDB for atomic increment operations and TTL support
 
 ### HTTP 429 Responses
 
@@ -1163,14 +1151,16 @@ Archive logs in compressed, low-cost storage for regulatory compliance:
 - GCP Coldline Storage / Archive Storage
 - Azure Cool Blob Storage / Archive Blob Storage
 
-**Retention requirements:**
+**Retention Requirements by Compliance Standard:**
 
-- SOC2: 1-7 years
-- ISO 27001: 1-3 years
-- HIPAA: 6 years
-- GDPR: 1-3 years
+| Compliance Standard | Retention Period | Scope                                              |
+| ------------------- | ---------------- | -------------------------------------------------- |
+| **SOC2**            | 1-7 years        | Audit logs, access logs, security events           |
+| **ISO 27001**       | 1-3 years        | Security logs, incident records                    |
+| **HIPAA**           | 6 years          | PHI access logs, audit trails                      |
+| **GDPR**            | 1-3 years        | Personal data access logs (with right to deletion) |
 
-**Archive process:**
+**Archive Process:**
 
 1. Export from hot storage after 30 days
 2. Compress (gzip, zstd)

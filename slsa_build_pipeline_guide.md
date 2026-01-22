@@ -1,6 +1,6 @@
 # SLSA Build Pipeline Guide
 
-**Last Updated:** January 21, 2026
+**Last Updated:** January 22, 2026
 
 A cloud-agnostic guide for building secure, verifiable container images with SLSA Level 3 compliance using GitHub Actions. This guide includes industry best practices and lessons learned from real-world production implementations.
 
@@ -60,35 +60,21 @@ This guide outlines a production-grade container image build pipeline that achie
 
 ### External Services
 
-**Container Registry** (must support signed images):
+Cloud-agnostic service options for container registries, storage, secrets management, and logging.
 
-- AWS Elastic Container Registry (ECR)
-- Google Container Registry (GCR) / Artifact Registry
-- Azure Container Registry (ACR)
-- Harbor
+| Service Category                                    | AWS                              | GCP                                          | Azure                    | Self-Hosted / Open Source                  |
+| --------------------------------------------------- | -------------------------------- | -------------------------------------------- | ------------------------ | ------------------------------------------ |
+| **Container Registry** (must support signed images) | Elastic Container Registry (ECR) | Container Registry (GCR) / Artifact Registry | Container Registry (ACR) | Harbor                                     |
+| **Object Storage**                                  | S3                               | Cloud Storage (GCS)                          | Blob Storage             | MinIO or S3-compatible                     |
+| **Secrets Management** (required)                   | Secrets Manager                  | Secret Manager                               | Key Vault                | HashiCorp Vault, External Secrets Operator |
+| **Logging Service** (required)                      | CloudWatch Logs                  | Cloud Logging                                | Monitor                  | Splunk, ELK Stack, Loki, Fluentd           |
 
-**Object Storage**:
+**Notes:**
 
-- AWS S3
-- Google Cloud Storage (GCS)
-- Azure Blob Storage
-- MinIO or S3-compatible storage
-
-**Secrets Management** (required):
-
-- AWS Secrets Manager
-- GCP Secret Manager
-- Azure Key Vault
-- HashiCorp Vault
-- Kubernetes External Secrets Operator
-
-**Logging Service** (required):
-
-- AWS CloudWatch Logs
-- GCP Cloud Logging
-- Azure Monitor
-- Splunk
-- Self-hosted solutions (ELK Stack, Loki, Fluentd, etc.)
+- **Container Registry**: Must support OCI artifact storage for Cosign signatures and attestations
+- **Object Storage**: Used for storing SBOMs, vulnerability scans, and SLSA provenance attestations
+- **Secrets Management**: Required for registry credentials, signing keys, and storage credentials
+- **Logging Service**: Essential for audit trails and compliance
 
 ### Secrets to Store in Vault
 
@@ -387,14 +373,28 @@ Generate SLSA provenance, SBOMs, vulnerability scan reports, sign all artifacts,
 - Push updated image to registry with new patch version tag
 - Update SLSA attestation and SBOMs for new version
 
-**Scanning Options**:
+**Scanning Options:**
 
-- **Registry Scanning**: Scan images directly in container registry using built-in scanners (ECR/GCR/ACR/Harbor) or Trivy on a cron job
-- **[Trivy Operator](https://github.com/aquasecurity/trivy-operator)**: Kubernetes-native continuous scanning
-  - Automatically scans running workloads and images
-  - Generates vulnerability reports as Kubernetes custom resources
-  - Pair with [Fluentd](https://github.com/fluent/fluentd) to export scan results to external logging/monitoring systems
-  - Provides real-time security posture visibility
+Choose between registry-based scanning or Kubernetes-native continuous scanning based on your deployment environment.
+
+| Approach              | Deployment Location            | Real-Time Monitoring | Setup Complexity | Integration                                   | Best For                                       |
+| --------------------- | ------------------------------ | -------------------- | ---------------- | --------------------------------------------- | ---------------------------------------------- |
+| **Registry Scanning** | Container registry or cron job | No                   | Low              | Built-in registry scanners or scheduled Trivy | Simple setups, registry-focused                |
+| **Trivy Operator**    | Kubernetes cluster             | Yes                  | Medium           | Native K8s custom resources, Fluentd export   | Kubernetes environments, continuous monitoring |
+
+**Registry Scanning:**
+
+- Scan images directly in container registry using built-in scanners (ECR/GCR/ACR/Harbor)
+- Or run Trivy on a cron job to scan registry images periodically
+- Generates vulnerability reports accessible via registry UI or API
+
+**Trivy Operator:**
+
+- Kubernetes-native continuous scanning via [Trivy Operator](https://github.com/aquasecurity/trivy-operator)
+- Automatically scans running workloads and images
+- Generates vulnerability reports as Kubernetes custom resources
+- Pair with [Fluentd](https://github.com/fluent/fluentd) to export scan results to external logging/monitoring systems
+- Provides real-time security posture visibility
 
 ### Runtime Policy Enforcement with Kubernetes
 
