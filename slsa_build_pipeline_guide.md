@@ -36,6 +36,8 @@ A cloud-agnostic guide for building secure, verifiable container images with SLS
 
 This guide outlines a production-grade container image build pipeline that achieves SLSA (Supply-chain Levels for Software Artifacts) Level 3 compliance. The pipeline is cloud-agnostic and works with any container registry that supports signed images (such as AWS ECR, Google GCR/Artifact Registry, Azure ACR, and Harbor) and object storage provider (S3, GCS, Azure Blob Storage).
 
+**Build Platform**: GitHub Actions is used throughout this guide as it is one of the few CI/CD platforms officially verified for SLSA Level 3 compliance. The ephemeral runners, isolated build environments, and tamper-evident audit logs meet SLSA's non-falsifiable provenance requirements.
+
 ### SLSA Level 3 Requirements
 
 - **Source**: Version-controlled with verified history
@@ -152,6 +154,8 @@ Build production container image using multi-stage Dockerfile that progressively
 - **Result**: Immutable image that cannot install packages
 
 **Logging**: Build started/completed, stage completions, image size
+
+**Reproducible Builds**: Ensure builds are deterministic by pinning all versions (base image, dependencies, toolchains), stripping timestamps from build artifacts, and sorting inputs consistently. This allows independent verification that published images match source code and build configuration.
 
 ### Stage 3: Vulnerability Patching and Image Compression
 
