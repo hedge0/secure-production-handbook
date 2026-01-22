@@ -12,6 +12,7 @@ A cloud-agnostic guide for building production-ready APIs with a practical blend
    - [External Services](#external-services)
 3. [Architecture Patterns](#3-architecture-patterns)
    - [Serverless vs Containers/VMs](#serverless-vs-containersvms)
+   - [API Gateway Architecture](#api-gateway-architecture)
    - [Serverless Cold Start Mitigation](#serverless-cold-start-mitigation)
    - [Language Selection for Serverless](#language-selection-for-serverless)
 4. [Application Security (Pre-Deployment)](#4-application-security-pre-deployment)
@@ -196,6 +197,97 @@ Use containers/VMs when:
 - Latency-critical applications (<50ms response time)
 - Stateful services (WebSockets, streaming, persistent connections)
 - High, consistent traffic patterns
+
+### API Gateway Architecture
+
+**Why API Gateways are Critical:**
+
+Modern production APIs should use an API Gateway as a centralized control plane rather than implementing cross-cutting concerns in every microservice. Without a gateway, teams duplicate authentication, rate limiting, logging, and circuit breaking logic across services, leading to inconsistencies and security gaps.
+
+**What API Gateways Handle:**
+
+- **Authentication & Authorization**: Centralized JWT validation, OAuth flows, API key management
+- **Rate Limiting**: Distributed rate limiting with shared state (per-user, per-endpoint)
+- **Request Routing**: Intelligent routing based on headers, paths, or request attributes
+- **Circuit Breaking**: Automatic failover when backend services are unhealthy
+- **Traffic Management**: Canary deployments, A/B testing, blue-green deployments
+- **Observability**: Centralized logging, metrics, distributed tracing
+- **Request/Response Transformation**: Header injection, payload mapping, protocol translation
+- **Security**: TLS termination, input validation, WAF integration
+
+**Cloud-Native API Gateway Options:**
+
+- **AWS**: API Gateway (serverless), Application Load Balancer (ALB) with Lambda targets
+- **GCP**: Cloud Endpoints, API Gateway, Cloud Load Balancing
+- **Azure**: API Management, Application Gateway
+
+**Open Source / Self-Hosted:**
+
+- **[Kong](https://github.com/Kong/kong)**: Battle-tested, plugin ecosystem, high performance
+- **[Tyk](https://github.com/TykTechnologies/tyk)**: API management with analytics
+- **[Envoy](https://github.com/envoyproxy/envoy)**: High-performance proxy (powers Istio)
+- **[Traefik](https://github.com/traefik/traefik)**: Modern, dynamic configuration
+
+**Architecture Pattern:**
+
+```
+Client Request
+    ↓
+[Edge Layer: Cloudflare/CloudFront + WAF]
+    ↓ (basic DDoS protection, 100-2000 req/min per IP)
+[API Gateway Layer]
+    ↓ (authentication, fine-grained rate limiting, routing)
+[Backend Services: Serverless/Containers]
+    ↓ (business logic only)
+[Data Layer: Managed databases]
+```
+
+**Centralized Authentication Example (Kong):**
+
+```yaml
+# Kong configuration - applies to all routes
+plugins:
+  - name: jwt
+    config:
+      key_claim_name: kid
+      secret_is_base64: false
+      claims_to_verify:
+        - exp
+        - iss
+        - aud
+  - name: rate-limiting
+    config:
+      minute: 100
+      policy: redis
+      redis_host: redis.internal
+```
+
+**Benefits of Gateway Architecture:**
+
+- **Single Point of Enforcement**: Auth and rate limiting rules in one place, not scattered across services
+- **Reduced Backend Complexity**: Services focus on business logic, not cross-cutting concerns
+- **Centralized Observability**: All API traffic visible in one location
+- **Simplified Compliance**: Audit logs and access controls managed centrally
+- **Better Performance**: Connection pooling, caching, compression at gateway layer
+
+**When to Use API Gateway:**
+
+- Microservices architecture with 3+ backend services
+- Need centralized authentication across multiple APIs
+- Multiple teams deploying independent services
+- Complex routing or traffic management requirements
+- Enterprise compliance and audit requirements
+
+**When Direct Load Balancer Might Suffice:**
+
+- Single monolithic application
+- Simple authentication model
+- Small team managing one codebase
+- Cost-sensitive early-stage product
+
+**Implementation Recommendation:**
+
+For production systems with multiple services, deploy an API Gateway between your edge layer (Cloudflare/WAF) and backend services. This architectural pattern is industry standard and eliminates the anti-pattern of duplicating security logic across every microservice.
 
 ### Serverless Cold Start Mitigation
 

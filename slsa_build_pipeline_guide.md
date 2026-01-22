@@ -22,6 +22,7 @@ A cloud-agnostic guide for building secure, verifiable container images with SLS
 4. [Post-Pipeline Operations](#4-post-pipeline-operations)
    - [Continuous Vulnerability Monitoring](#continuous-vulnerability-monitoring)
    - [Runtime Policy Enforcement with Kubernetes](#runtime-policy-enforcement-with-kubernetes)
+   - [SLSA Provenance Verification](#slsa-provenance-verification)
 5. [Attack Scenarios Prevented](#5-attack-scenarios-prevented)
    - [Build-Time Security](#build-time-security)
    - [Dependency & Base Image Security](#dependency--base-image-security)
@@ -311,24 +312,84 @@ Generate SLSA provenance, SBOMs, vulnerability scan reports, sign all artifacts,
 
 **[Kyverno](https://github.com/kyverno/kyverno)**: Kubernetes-native policy engine for runtime security
 
-**Essential Policies**:
+### SLSA Provenance Verification
 
-- **Image Signature Verification**: Require all container images signed with trusted public key (Cosign verification)
+**Why It's Critical:**
+
+Image signature verification only checks "was this signed?" - it doesn't verify the image was built from the correct source repository or builder. Without provenance verification, an attacker with your signing key can deploy backdoored images built from forked repos.
+
+**Kyverno Policy with Provenance Verification:**
+
+```yaml
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: verify-slsa-provenance
+spec:
+  validationFailureAction: enforce
+  rules:
+    - name: verify-provenance
+      match:
+        resources:
+          kinds:
+            - Pod
+      verifyImages:
+        - imageReferences:
+            - "registry.example.com/*"
+
+          # Verify signature
+          attestors:
+            - entries:
+                - keys:
+                    publicKeys: |-
+                      -----BEGIN PUBLIC KEY-----
+                      ...your public key...
+                      -----END PUBLIC KEY-----
+
+          # Verify provenance claims
+          attestations:
+            - predicateType: https://slsa.dev/provenance/v0.2
+              conditions:
+                - all:
+                    # Must be from authorized repo
+                    - key: "{{ invocation.configSource.uri }}"
+                      operator: Equals
+                      value: "git+https://github.com/yourorg/yourapp"
+
+                    # Must be built by GitHub Actions
+                    - key: "{{ builder.id }}"
+                      operator: Equals
+                      value: "https://github.com/slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@refs/tags/v1.9.0"
+```
+
+**What Gets Verified:**
+
+1. Image was built from authorized source repository (not attacker's fork)
+2. Image was built by authorized builder (GitHub Actions, not local machine)
+3. Signature is valid
+
+**Testing:**
+
+```bash
+# Manual verification
+cosign verify-attestation \
+  --key cosign.pub \
+  --type slsaprovenance \
+  registry.example.com/app:v1.0.0
+```
+
+**Essential Policies:**
+
+- **Image Signature Verification**: Require signed images
+- **SLSA Provenance Verification**: Require authorized source repo and builder
 - **Non-Root Enforcement**: Block containers running as root user
 - **Resource Limits**: Enforce CPU and memory limits on all pods
 - **Privileged Containers**: Block privileged mode and dangerous capabilities
 - **Host Namespace Isolation**: Prevent hostNetwork, hostPID, hostIPC usage
-- **Read-Only Root Filesystem**: Require containers to run with read-only root filesystem where possible
+- **Read-Only Root Filesystem**: Require read-only root filesystem where possible
 - **Image Registry Allowlist**: Only allow images from approved registries
 
-**Example Kyverno Policy Structure**:
-
-- Validate image signatures on admission
-- Mutate pods to add security contexts automatically
-- Generate policy reports for non-compliant resources
-- Block non-compliant workloads from deployment
-
-**Additional Runtime Security**:
+**Additional Runtime Security:**
 
 - **[Istio](https://github.com/istio/istio)**: Service mesh for enforcing mutual TLS (mTLS) between containers, traffic management, network policies, and observability
 - **[Falco](https://github.com/falcosecurity/falco)**: Runtime threat detection for unusual container behavior
