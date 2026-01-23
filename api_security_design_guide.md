@@ -1,6 +1,6 @@
 # API Security Design Guide
 
-**Last Updated:** January 22, 2026
+**Last Updated:** January 23, 2026
 
 A cloud-agnostic guide for building production-ready APIs with a practical blend of security and performance. This guide includes industry best practices and lessons learned from real-world implementations across serverless and traditional architectures.
 

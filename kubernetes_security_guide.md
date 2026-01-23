@@ -1,6 +1,6 @@
 # Kubernetes Security Architecture Guide
 
-**Last Updated:** January 22, 2026
+**Last Updated:** January 23, 2026
 
 A cloud-agnostic guide for building production-ready Kubernetes clusters with defense-in-depth security, high availability, and disaster recovery. This guide includes industry best practices and lessons learned from real-world production implementations.
 
@@ -159,32 +159,47 @@ Choose between private and public subnets based on your security requirements an
 
 ### Database Layer
 
-**Use Managed Databases** (Required):
+**Never run databases in Kubernetes for production workloads.**
 
-**Never run databases in Kubernetes for production.** Use AWS RDS, GCP Cloud SQL, or Azure Database for PostgreSQL.
+Use managed cloud databases instead:
 
-**Why:**
+- AWS RDS (PostgreSQL, Aurora)
+- GCP Cloud SQL
+- Azure Database for PostgreSQL
 
-- Databases require persistent storage, backups, replication - Kubernetes adds complexity
-- Managed services provide automated backups, Multi-AZ failover, point-in-time recovery
-- Separates database lifecycle from Kubernetes cluster lifecycle
+**Why managed databases:**
 
-**Configuration:**
+Kubernetes is designed for stateless applications. Running databases in Kubernetes introduces operational complexity:
 
-- Deploy databases in private subnets (not accessible from internet)
-- Security group allows only Kubernetes worker nodes
-- Multi-AZ enabled for high availability
-- Automated daily snapshots enabled
+- Persistent storage management across node failures
+- Manual backup and recovery procedures
+- Complex replication configuration
+- Database lifecycle tightly coupled to cluster lifecycle
 
-**Connection from Kubernetes:**
+Managed database services provide:
 
-Use Secrets Store CSI Driver to inject database credentials from cloud secrets manager:
+- Automated backups with point-in-time recovery
+- Multi-AZ deployment with automatic failover (60-120 seconds)
+- Automated patching and maintenance windows
+- Separation of database operations from Kubernetes operations
 
-- **AWS EKS**: Secrets Store CSI Driver with AWS Secrets Manager
-- **GKE**: Workload Identity with Secret Manager
-- **AKS**: Azure Key Vault Provider for Secrets Store CSI Driver
+**Network Architecture:**
 
-Pods retrieve credentials as environment variables from Kubernetes secrets (synced from external vault).
+- Deploy databases in **private subnets** (no internet access)
+- Security groups allow connections **only from Kubernetes worker nodes**
+- All database traffic stays within VPC
+
+**Connection Pattern:**
+
+Applications running in Kubernetes retrieve database credentials from cloud secrets managers using Secrets Store CSI Driver:
+
+| Cloud Provider | Integration                                           |
+| -------------- | ----------------------------------------------------- |
+| **AWS EKS**    | Secrets Store CSI Driver + AWS Secrets Manager        |
+| **GCP GKE**    | Workload Identity + Secret Manager                    |
+| **Azure AKS**  | Azure Key Vault Provider for Secrets Store CSI Driver |
+
+Credentials are synced from the external vault into Kubernetes secrets, then injected into pods as environment variables. This keeps credentials centralized in the cloud provider's secrets manager (not in Kubernetes native Secrets).
 
 ## 4. Cluster Architecture & Separation
 
