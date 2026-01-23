@@ -1,6 +1,6 @@
 # API Security Design Guide
 
-**Last Updated:** January 23, 2026
+**Last Updated:** January 22, 2026
 
 A cloud-agnostic guide for building production-ready APIs with a practical blend of security and performance. This guide includes industry best practices and lessons learned from real-world implementations across serverless and traditional architectures.
 
@@ -63,7 +63,6 @@ A cloud-agnostic guide for building production-ready APIs with a practical blend
     - [Batching Requests](#batching-requests)
     - [Concurrency Patterns](#concurrency-patterns)
     - [Caching Strategies](#caching-strategies)
-    - [Database Architecture & Performance](#database-architecture--performance)
     - [Serverless Cold Start Mitigation](#serverless-cold-start-mitigation-1)
 13. [API Versioning](#13-api-versioning)
     - [Versioning Approaches](#versioning-approaches)
@@ -73,8 +72,7 @@ A cloud-agnostic guide for building production-ready APIs with a practical blend
     - [Cloud IAM Policies for API Infrastructure](#cloud-iam-policies)
     - [Service Account Management](#service-account-management)
     - [Secrets Retrieval Patterns](#secrets-retrieval-patterns)
-    - [Database Access Patterns](#database-access)
-    - [Access Monitoring and Auditing](#monitoring-and-auditing)
+    - [Monitoring and Auditing](#monitoring-and-auditing)
 15. [Incident Response](#15-incident-response)
     - [Detection & Initial Response](#detection--initial-response)
     - [Containment & Recovery](#containment--recovery)
@@ -729,84 +727,32 @@ Encrypt sensitive fields in application code before writing to database using AE
 
 ### Field-Level Encryption for PII/PHI
 
-Encrypt individual sensitive fields in your database to protect against application compromise, insider threats, and credential breaches where database-level encryption is insufficient.
+For highly sensitive data (PII, PHI, PCI), encrypt specific fields in application code before storing in database using envelope encryption with cloud KMS.
 
-**When to use field-level encryption:**
+**When to use:**
 
-- PII: Names, addresses, SSNs, emails, phone numbers
+- PII: SSNs, passport numbers, driver's license numbers
 - PHI: Medical records, diagnoses, prescriptions
 - PCI: Credit card numbers, CVV codes
-- Compliance requirements (GDPR, HIPAA, PCI-DSS) mandating data protection beyond database encryption
+- Compliance requirements (GDPR, HIPAA, PCI-DSS) mandating protection beyond database encryption
 
-**Envelope Encryption Pattern** (industry standard):
+**Envelope Encryption Pattern:**
 
 ```
 User Data → Encrypt with Data Encryption Key (DEK)
 DEK → Encrypt with Key Encryption Key (KEK) from KMS
-Store: Encrypted data + Encrypted DEK
+Store: Encrypted data + Encrypted DEK in database
 ```
 
-**Implementation example (Python with AWS KMS):**
+**Implementation:**
 
-```python
-import boto3
-import base64
-from cryptography.fernet import Fernet
+- Use cloud KMS (AWS KMS, GCP Cloud KMS, Azure Key Vault) to generate and manage encryption keys
+- Libraries: AWS Encryption SDK, Google Tink, Azure SDK
+- Encrypt only necessary fields (SSN, credit cards), not entire records
+- Encrypted fields cannot be queried/indexed - plan schema accordingly
+- Rotate KEK annually in KMS
 
-kms = boto3.client('kms')
-
-def encrypt_field(plaintext, kms_key_id):
-    # Generate data encryption key
-    response = kms.generate_data_key(KeyId=kms_key_id, KeySpec='AES_256')
-    plaintext_key = response['Plaintext']
-    encrypted_key = response['CiphertextBlob']
-
-    # Encrypt data with DEK
-    cipher = Fernet(base64.urlsafe_b64encode(plaintext_key[:32]))
-    encrypted_data = cipher.encrypt(plaintext.encode())
-
-    # Store both encrypted data and encrypted DEK
-    return {
-        'encrypted_data': base64.b64encode(encrypted_data).decode(),
-        'encrypted_key': base64.b64encode(encrypted_key).decode()
-    }
-
-def decrypt_field(encrypted_data, encrypted_key):
-    # Decrypt DEK using KMS
-    response = kms.decrypt(CiphertextBlob=base64.b64decode(encrypted_key))
-    plaintext_key = response['Plaintext']
-
-    # Decrypt data with DEK
-    cipher = Fernet(base64.urlsafe_b64encode(plaintext_key[:32]))
-    return cipher.decrypt(base64.b64decode(encrypted_data)).decode()
-```
-
-**Cloud KMS options:**
-
-- AWS: KMS with envelope encryption, automatic key rotation
-- GCP: Cloud KMS with customer-managed encryption keys (CMEK)
-- Azure: Key Vault for key management and encryption operations
-
-**Key considerations:**
-
-- **Performance**: Encrypt only necessary fields (SSN, credit cards), not entire records
-- **Searchability**: Encrypted fields cannot be queried/indexed - use searchable encryption libraries or hash indexes for lookup
-- **Key rotation**: Rotate KEK annually, re-encrypt DEKs (data re-encryption not required with envelope pattern)
-- **Access control**: Restrict KMS key permissions to application service accounts only
-
-**Database schema example:**
-
-```sql
-CREATE TABLE users (
-    id UUID PRIMARY KEY,
-    email VARCHAR(255),  -- Not encrypted (needed for login)
-    ssn_encrypted TEXT,  -- Encrypted SSN
-    ssn_dek_encrypted TEXT,  -- Encrypted data key for SSN
-    created_at TIMESTAMP
-);
-```
-
-This pattern provides defense-in-depth: even if attackers gain database access, they cannot decrypt sensitive fields without KMS access.
+**Defense in depth:** Even if attackers gain database access, they cannot decrypt sensitive fields without KMS permissions.
 
 ### Encryption in Transit & TLS Requirements
 
@@ -1276,93 +1222,18 @@ Implement caching at multiple layers to reduce latency and backend load.
 - Session storage for faster lookups
 - Set appropriate TTLs based on data staleness tolerance
 
-**Database Architecture & Performance**:
+**Database Performance Considerations**:
 
-Optimize database layer to prevent performance bottlenecks and resource exhaustion attacks.
+For API performance, consider these database patterns:
 
-| Pattern                 | Implementation                              | Security Benefit                                           | When to Use                        |
-| ----------------------- | ------------------------------------------- | ---------------------------------------------------------- | ---------------------------------- |
-| **Connection Pooling**  | PgBouncer, RDS Proxy, or ORM built-in       | Prevents connection exhaustion attacks, 10x faster queries | Always (serverless and containers) |
-| **Read Replicas**       | Route reads to replicas, writes to primary  | Protects primary from overload, scales read capacity       | Read-heavy workloads (>80% reads)  |
-| **Query Optimization**  | Indexes, query timeouts (5s), LIMIT clauses | Prevents table scan and complexity attacks                 | Always                             |
-| **Prepared Statements** | Parameterized queries in all database calls | Prevents SQL injection, improves performance               | Always                             |
+| Pattern                 | When to Use                        | Security Benefit                       |
+| ----------------------- | ---------------------------------- | -------------------------------------- |
+| **Connection Pooling**  | Always (serverless and containers) | Prevents connection exhaustion attacks |
+| **Read Replicas**       | Read-heavy workloads (>80% reads)  | Protects primary from overload         |
+| **Query Timeouts**      | Always                             | Prevents long-running query attacks    |
+| **Prepared Statements** | Always                             | Prevents SQL injection                 |
 
-**Connection Pooling:**
-
-```javascript
-// Serverless: Use cloud proxy to centralize pooling
-const pool = new Pool({
-  host: process.env.RDS_PROXY_ENDPOINT, // AWS RDS Proxy
-  max: 2, // Keep minimal per Lambda instance
-  idleTimeoutMillis: 1000,
-});
-
-// Containers: Application-level pooling
-const pool = new Pool({
-  host: process.env.DB_HOST,
-  max: 20, // Max connections per container
-  idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 2000,
-});
-```
-
-**Read/Write Splitting for Read-Heavy Workloads:**
-
-```javascript
-// Separate connection pools
-const primary = createPool(process.env.PRIMARY_DB_URL);
-const replica = createPool(process.env.REPLICA_DB_URL);
-
-// Route by operation type
-async function getUser(id) {
-  // Reads from replica (eventually consistent, acceptable for most use cases)
-  return replica.query("SELECT * FROM users WHERE id = $1", [id]);
-}
-
-async function updateUser(id, data) {
-  // Writes to primary (strongly consistent)
-  await primary.query("UPDATE users SET name = $1 WHERE id = $2", [
-    data.name,
-    id,
-  ]);
-  // For immediate read-after-write, query primary instead of replica
-  return primary.query("SELECT * FROM users WHERE id = $1", [id]);
-}
-```
-
-**Query Optimization & Security:**
-
-```javascript
-// Set query timeout to prevent long-running attacks
-await client.query("SET statement_timeout = 5000"); // 5 second max
-
-// Use indexes and LIMIT to prevent table scans
-const users = await pool.query(
-  "SELECT * FROM users WHERE email = $1 LIMIT 100", // Parameterized + limited
-  [email]
-);
-
-// Avoid N+1 queries with JOINs
-const result = await pool.query(
-  `
-  SELECT u.*, json_agg(o.*) as orders
-  FROM users u
-  LEFT JOIN orders o ON o.user_id = u.id
-  WHERE u.id = $1
-  GROUP BY u.id
-`,
-  [userId]
-);
-```
-
-**Database Monitoring:**
-
-| Metric              | Alert Threshold     | Indicates                       |
-| ------------------- | ------------------- | ------------------------------- |
-| Connection count    | >80% of max         | Connection exhaustion or leak   |
-| Query latency (p99) | >500ms              | Missing indexes or slow queries |
-| Replica lag         | >5 seconds          | Replication overload            |
-| Slow query count    | >10 queries >5s/min | Attack or unoptimized queries   |
+**Implementation:** Use connection pooling libraries (application-level for containers, RDS Proxy for serverless). Route reads to replicas, writes to primary. Set query timeouts (5s). Always use parameterized queries.
 
 **Cache Invalidation**:
 
@@ -1658,43 +1529,6 @@ class SecretManager:
             self.secrets['db_password'] = fetch_secret('prod/api/db-password')
             time.sleep(3600)  # Refresh hourly
 ```
-
-### Database Access
-
-**Application User (Non-Root)**:
-
-```sql
--- PostgreSQL example
-CREATE USER api_app_user WITH PASSWORD 'secure_password';
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE users, orders TO api_app_user;
-REVOKE CREATE ON SCHEMA public FROM api_app_user;
-```
-
-**IAM Database Authentication** (eliminates passwords):
-
-AWS RDS IAM Auth:
-
-```python
-import boto3
-import pymysql
-
-rds_client = boto3.client('rds')
-token = rds_client.generate_db_auth_token(
-    DBHostname='prod-db.cluster.us-east-1.rds.amazonaws.com',
-    Port=3306,
-    DBUsername='api_iam_user',
-    Region='us-east-1'
-)
-
-connection = pymysql.connect(
-    host='prod-db.cluster.us-east-1.rds.amazonaws.com',
-    user='api_iam_user',
-    password=token,  # Token valid 15 minutes
-    ssl={'ssl_mode': 'REQUIRED'}
-)
-```
-
-GCP Cloud SQL and Azure Database support similar IAM authentication.
 
 ### Monitoring and Auditing
 

@@ -161,27 +161,30 @@ Choose between private and public subnets based on your security requirements an
 
 **Use Managed Databases** (Required):
 
-Never run databases in Kubernetes for production. Use AWS RDS, GCP Cloud SQL, or Azure Database.
+**Never run databases in Kubernetes for production.** Use AWS RDS, GCP Cloud SQL, or Azure Database for PostgreSQL.
 
-**Configuration**:
+**Why:**
 
-- Deploy in private subnets
+- Databases require persistent storage, backups, replication - Kubernetes adds complexity
+- Managed services provide automated backups, Multi-AZ failover, point-in-time recovery
+- Separates database lifecycle from Kubernetes cluster lifecycle
+
+**Configuration:**
+
+- Deploy databases in private subnets (not accessible from internet)
 - Security group allows only Kubernetes worker nodes
-- Multi-AZ enabled (automatic failover in 60-120 seconds)
-- Automated daily snapshots with 7-30 day retention
-- Point-in-time recovery enabled
-- Create application database user with least privilege (never use root/admin user for application connections)
-- Grant only required permissions (SELECT, INSERT, UPDATE, DELETE on specific tables)
+- Multi-AZ enabled for high availability
+- Automated daily snapshots enabled
 
-**Connection from Kubernetes**:
+**Connection from Kubernetes:**
 
-- Store credentials in external secrets manager (AWS Secrets Manager, GCP Secret Manager, Azure Key Vault)
-- Load into Kubernetes via cloud-native integrations:
-  - AWS EKS: Secrets Store CSI Driver with AWS Secrets Manager
-  - GKE: Workload Identity with Secret Manager
-  - AKS: Azure Key Vault Provider for Secrets Store CSI Driver
-- Pods retrieve from Kubernetes secrets as environment variables
-- Cloud-native solutions are simpler and more secure than third-party operators
+Use Secrets Store CSI Driver to inject database credentials from cloud secrets manager:
+
+- **AWS EKS**: Secrets Store CSI Driver with AWS Secrets Manager
+- **GKE**: Workload Identity with Secret Manager
+- **AKS**: Azure Key Vault Provider for Secrets Store CSI Driver
+
+Pods retrieve credentials as environment variables from Kubernetes secrets (synced from external vault).
 
 ## 4. Cluster Architecture & Separation
 
@@ -1082,11 +1085,8 @@ All critical components can be recreated from code and backups:
 
 **Databases** (Managed Services):
 
-- Restore from automated snapshots or point-in-time recovery
-- Manual snapshots before major changes (schema migrations, deployments)
-- Cross-region snapshots for regional disaster recovery
+- Restore from automated snapshots or point-in-time recovery (15-30 minutes)
 - Update Kubernetes secrets with new database endpoint after restore
-- Database recovery: 15-30 minutes
 
 **Applications** (ArgoCD):
 
@@ -1108,19 +1108,7 @@ Complete disaster recovery steps:
 5. ArgoCD syncs all applications to new production cluster (10-20 minutes)
 6. Update DNS to point to new load balancers (5 minutes + TTL propagation)
 
-**Emergency Secret Rotation (when compromise suspected):**
-
-```bash
-# Rotate database password
-NEW_PASSWORD=$(openssl rand -base64 32)
-aws rds modify-db-instance --db-instance-identifier prod-db --master-user-password "$NEW_PASSWORD" --apply-immediately
-aws secretsmanager update-secret --secret-id production/database/password --secret-string "$NEW_PASSWORD"
-
-# Rotate API keys and service account credentials
-# Update vault, then restart pods: kubectl rollout restart deployment -n production
-```
-
-**Validation**: Check pod status (`kubectl get pods`), authentication logs, database connectivity. Remove old secrets after 24-hour grace period.
+**Validation**: Check pod status (`kubectl get pods`), authentication logs, database connectivity.
 
 **Total RTO**: 60-120 minutes  
 **RPO**: 5 minutes (database point-in-time recovery)
@@ -1131,9 +1119,9 @@ aws secretsmanager update-secret --secret-id production/database/password --secr
 
 - Perform quarterly in non-production environment
 - Test infrastructure recreation with Terraform
-- Validate database restore procedures
+- Verify database restore procedures
 - Verify ArgoCD can sync complete application state
-- Document lessons learned and update procedures
+- Document lessons learned
 
 **Key principle**: Infrastructure as code + GitOps + automated database backups = rapid, reproducible disaster recovery.
 
