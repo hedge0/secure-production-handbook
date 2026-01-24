@@ -125,7 +125,7 @@ Cloud-agnostic service options for secrets management, logging, storage, and edg
 | --------------------------------- | --------------------------------- | ---------------------------------- | ---------------------------------------- | -------------------------------------- |
 | **Secrets Management** (required) | Secrets Manager                   | Secret Manager                     | Key Vault                                | HashiCorp Vault                        |
 | **Logging & SIEM** (required)     | CloudWatch Logs                   | Cloud Logging                      | Monitor                                  | Splunk, ELK Stack, Loki                |
-| **Cold Storage** (compliance)     | S3 Glacier / Glacier Deep Archive | Coldline Storage / Archive Storage | Cool Blob Storage / Archive Blob Storage | -                                      |
+| **Cold Storage** (compliance)     | S3 Glacier / Glacier Deep Archive | Coldline Storage / Archive Storage | Cool Blob Storage / Archive Blob Storage | garagehq.deuxfleurs.fr                      |
 | **Edge Protection** (required)    | CloudFront + AWS WAF              | Cloud Armor + Cloud CDN            | Front Door + Azure WAF                   | Cloudflare (Free tier with WAF + DDoS) |
 | **Rate Limiting State**           | DynamoDB                          | Firestore                          | Cosmos DB                                | Redis (any cloud or self-hosted)       |
 
