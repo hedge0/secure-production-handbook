@@ -216,30 +216,106 @@ Use Secrets Store CSI Driver to inject credentials from cloud secrets manager in
 - **GKE**: Workload Identity with Secret Manager
 - **AKS**: Azure Key Vault Provider for Secrets Store CSI Driver
 
+**Setup (AWS EKS Example):**
+
+```bash
+# Step 1: Install Secrets Store CSI Driver
+helm repo add secrets-store-csi-driver https://kubernetes-sigs.github.io/secrets-store-csi-driver/charts
+helm install csi-secrets-store secrets-store-csi-driver/secrets-store-csi-driver --namespace kube-system
+
+# Step 2: Install AWS Secrets Manager provider
+kubectl apply -f https://raw.githubusercontent.com/aws/secrets-store-csi-driver-provider-aws/main/deployment/aws-provider-installer.yaml
+```
+
+**SecretProviderClass Configuration:**
+
+```yaml
+# Define which secrets to sync from AWS Secrets Manager
+apiVersion: secrets-store.csi.x-k8s.io/v1
+kind: SecretProviderClass
+metadata:
+  name: db-credentials-sync
+  namespace: production
+spec:
+  provider: aws
+  parameters:
+    objects: |
+      - objectName: "prod/database/credentials"
+        objectType: "secretsmanager"
+        jmesPath:
+          - path: username
+            objectAlias: username
+          - path: password
+            objectAlias: password
+          - path: host
+            objectAlias: host
+  # Optional: Create K8s Secret for environment variable injection
+  secretObjects:
+    - secretName: db-credentials
+      type: Opaque
+      data:
+        - objectName: username
+          key: username
+        - objectName: password
+          key: password
+        - objectName: host
+          key: host
+```
+
+**Pod Configuration:**
+
 ```yaml
 apiVersion: v1
 kind: Pod
 metadata:
   name: app-pod
+  namespace: production
 spec:
-  serviceAccountName: app-service-account # Cloud IAM identity for pod
+  serviceAccountName: app-service-account # Must have IRSA/Workload Identity configured
   containers:
     - name: app
       image: myapp:latest
       env:
         - name: DB_HOST
-          value: "prod-db.cluster.us-east-1.rds.amazonaws.com"
+          valueFrom:
+            secretKeyRef:
+              name: db-credentials # Created by CSI driver from vault
+              key: host
         - name: DB_USER
           valueFrom:
             secretKeyRef:
-              name: db-credentials # Synced from AWS Secrets Manager
+              name: db-credentials # Created by CSI driver from vault
               key: username
         - name: DB_PASSWORD
           valueFrom:
             secretKeyRef:
-              name: db-credentials # Synced from AWS Secrets Manager
+              name: db-credentials # Created by CSI driver from vault
               key: password
+        - name: DB_NAME
+          value: "mydb"
+        - name: DB_PORT
+          value: "5432"
+      volumeMounts:
+        - name: secrets-store
+          mountPath: "/mnt/secrets"
+          readOnly: true
+  volumes:
+    - name: secrets-store
+      csi:
+        driver: secrets-store.csi.k8s.io
+        readOnly: true
+        volumeAttributes:
+          secretProviderClass: "db-credentials-sync"
 ```
+
+**How this works:**
+
+1. CSI driver authenticates to AWS using pod's IRSA role
+2. Fetches secrets from AWS Secrets Manager
+3. Creates Kubernetes Secret (`db-credentials`) with vault contents
+4. Pod consumes secret via environment variables
+5. When vault secret rotates, CSI driver automatically updates K8s Secret
+6. Pod restart picks up new credentials (no manual intervention)
 
 **From Serverless:**
 
@@ -360,9 +436,20 @@ aws secretsmanager create-secret \
 
 **Credential Rotation:**
 
-- Automated rotation every 90 days
-- Manual rotation after security incidents
-- Zero-downtime rotation: Create new credentials → update secret → deploy → revoke old
+Modern best practices (NIST SP 800-63B, OWASP 2024): Routine rotation no longer recommended - focus on preventing exposure.
+
+**Rotate only when:**
+
+- Secrets confirmed or suspected compromised
+- Employee with access leaves organization
+- Compliance requirements mandate rotation
+
+**Better security approach:**
+
+- Use short-lived credentials (IAM database authentication - tokens expire after 15 minutes)
+- Implement proper access controls and audit logging
+- Monitor for unauthorized access attempts
+- Use Workload Identity/IRSA in Kubernetes (automatic credential refresh)
 
 ## 6. Encryption
 
