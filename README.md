@@ -97,6 +97,7 @@ A curated list of useful open-source GitHub projects organized by category
 - [Cosign](https://github.com/sigstore/cosign) - Container signing and verification tool that ensures software supply chain security through cryptographic signatures and transparency logs.
 - [Copacetic](https://github.com/project-copacetic/copacetic) - Tool for patching container image vulnerabilities without rebuilding, enabling faster security remediation in production environments.
 - [Dependabot](https://github.com/dependabot/dependabot-core) - Automated dependency update tool that checks for outdated dependencies and creates pull requests to keep projects secure and up-to-date.
+- [SLSA GitHub Generator](https://github.com/slsa-framework/slsa-github-generator) - Official SLSA Level 3 provenance generator for GitHub Actions that creates non-falsifiable build attestations for supply chain security.
 
 ## Backup & Disaster Recovery
 
