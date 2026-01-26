@@ -1,6 +1,6 @@
 # SLSA Build Pipeline Guide
 
-**Last Updated:** January 22, 2026
+**Last Updated:** January 26, 2026
 
 A cloud-agnostic guide for building secure, verifiable container images with SLSA Level 3 compliance using GitHub Actions. This guide includes industry best practices and lessons learned from real-world production implementations.
 
@@ -24,14 +24,7 @@ A cloud-agnostic guide for building secure, verifiable container images with SLS
    - [Runtime Policy Enforcement with Kubernetes](#runtime-policy-enforcement-with-kubernetes)
    - [SLSA Provenance Verification](#slsa-provenance-verification)
 5. [Attack Scenarios Prevented](#5-attack-scenarios-prevented)
-   - [Build-Time Security](#build-time-security)
-   - [Dependency & Base Image Security](#dependency--base-image-security)
-   - [Registry & Artifact Security](#registry--artifact-security)
-   - [Runtime Vulnerability Management](#runtime-vulnerability-management)
 6. [References](#6-references)
-   - [SLSA Framework](#slsa-framework)
-   - [Tools and Projects](#tools-and-projects)
-   - [Standards and Specifications](#standards-and-specifications)
 
 ## 1. Overview
 
@@ -557,8 +550,6 @@ cosign verify-attestation \
 
 This guide's SLSA Level 3 pipeline prevents supply chain attacks targeting the software build and delivery process.
 
-### Build-Time Security
-
 **Build-Time Code Injection**
 
 - Attack: Modified source code or build scripts during CI/CD execution
@@ -573,8 +564,6 @@ This guide's SLSA Level 3 pipeline prevents supply chain attacks targeting the s
 
 - Attack: Hardcoded credentials, API keys, or tokens accidentally committed to source
 - Mitigated by: TruffleHog secret scanning in pre-commit hooks, GitHub Secret Scanning blocking commits, SAST scanning (Opengrep), secrets in external vaults
-
-### Dependency & Base Image Security
 
 **Malicious Dependency Injection**
 
@@ -591,8 +580,6 @@ This guide's SLSA Level 3 pipeline prevents supply chain attacks targeting the s
 - Attack: Deploying container images with known HIGH/CRITICAL CVEs to production
 - Mitigated by: Copacetic patching during build, Trivy scanning blocking critical unfixed CVEs, Go projects recompiled with latest toolchain, Trivy Operator post-deployment scanning
 
-### Registry & Artifact Security
-
 **Registry Poisoning**
 
 - Attack: Malicious images pushed to registry impersonating legitimate builds
@@ -607,8 +594,6 @@ This guide's SLSA Level 3 pipeline prevents supply chain attacks targeting the s
 
 - Attack: Registry access gained to modify or replace images
 - Mitigated by: Kyverno + Cosign image signature verification, SLSA attestation verification matching build provenance, registry access controls and audit logging, immutable image tags
-
-### Runtime Vulnerability Management
 
 **Runtime Package Manager Abuse**
 
@@ -627,30 +612,30 @@ This guide's SLSA Level 3 pipeline prevents supply chain attacks targeting the s
 - [SLSA Specification](https://slsa.dev/)
 - [SLSA Requirements](https://slsa.dev/spec/v1.0/requirements)
 - [SLSA Source Track](https://slsa.dev/spec/draft/source-requirements)
-- [SLSA GitHub Generator](https://github.com/slsa-framework/slsa-github-generator) - Official SLSA Level 3 provenance generator for GitHub Actions
+- [SLSA GitHub Generator](https://github.com/slsa-framework/slsa-github-generator)
 
 ### Tools and Projects
 
-- [Docker Buildx](https://github.com/docker/buildx) - Multi-platform image building
-- [Docker Hardened Images](https://www.docker.com/products/hardened-images/) - Secure base images
-- [Copacetic](https://github.com/project-copacetic/copacetic) - Vulnerability patching
-- [Trivy](https://github.com/aquasecurity/trivy) - Vulnerability scanning and SBOM generation
-- [Trivy Operator](https://github.com/aquasecurity/trivy-operator) - Kubernetes security scanning
-- [Cosign](https://github.com/sigstore/cosign) - Container signing and verification
-- [Syft](https://github.com/anchore/syft) - SBOM generation
-- [Grype](https://github.com/anchore/grype) - Vulnerability scanning
-- [Dependabot](https://github.com/dependabot/dependabot-core) - Automated dependency updates
-- [Opengrep](https://github.com/opengrep/opengrep) - Static application security testing
-- [TruffleHog](https://github.com/trufflesecurity/trufflehog) - Secret scanning
-- [Kyverno](https://github.com/kyverno/kyverno) - Kubernetes policy engine
-- [Istio](https://github.com/istio/istio) - Service mesh for mTLS and network policies
-- [Falco](https://github.com/falcosecurity/falco) - Runtime security monitoring
-- [Fluentd](https://github.com/fluent/fluentd) - Log collection and forwarding
+- [Docker Buildx](https://github.com/docker/buildx)
+- [Docker Hardened Images](https://www.docker.com/products/hardened-images/)
+- [Copacetic](https://github.com/project-copacetic/copacetic)
+- [Trivy](https://github.com/aquasecurity/trivy)
+- [Trivy Operator](https://github.com/aquasecurity/trivy-operator)
+- [Cosign](https://github.com/sigstore/cosign)
+- [Syft](https://github.com/anchore/syft)
+- [Grype](https://github.com/anchore/grype)
+- [Dependabot](https://github.com/dependabot/dependabot-core)
+- [Opengrep](https://github.com/opengrep/opengrep)
+- [TruffleHog](https://github.com/trufflesecurity/trufflehog)
+- [Kyverno](https://github.com/kyverno/kyverno)
+- [Istio](https://github.com/istio/istio)
+- [Falco](https://github.com/falcosecurity/falco)
+- [Fluentd](https://github.com/fluent/fluentd)
 
 ### Standards and Specifications
 
-- [SPDX Specification](https://spdx.dev/) - Software Package Data Exchange
-- [CycloneDX Specification](https://cyclonedx.org/) - Software Bill of Materials standard
-- [in-toto Attestation Framework](https://in-toto.io/) - Supply chain metadata framework
-- [OCI Distribution Spec](https://github.com/opencontainers/distribution-spec) - Container registry API
-- [Sigstore](https://www.sigstore.dev/) - Signing and transparency for software supply chains
+- [SPDX Specification](https://spdx.dev/)
+- [CycloneDX Specification](https://cyclonedx.org/)
+- [in-toto Attestation Framework](https://in-toto.io/)
+- [OCI Distribution Spec](https://github.com/opencontainers/distribution-spec)
+- [Sigstore](https://www.sigstore.dev/)

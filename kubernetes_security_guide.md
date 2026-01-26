@@ -1,6 +1,6 @@
 # Kubernetes Security Architecture Guide
 
-**Last Updated:** January 23, 2026
+**Last Updated:** January 26, 2026
 
 A cloud-agnostic guide for building production-ready Kubernetes clusters with defense-in-depth security, high availability, and disaster recovery. This guide includes industry best practices and lessons learned from real-world production implementations.
 
@@ -52,16 +52,7 @@ A cloud-agnostic guide for building production-ready Kubernetes clusters with de
     - [Containment & Recovery](#containment--recovery)
     - [Post-Incident](#post-incident)
 14. [Attack Scenarios Prevented](#14-attack-scenarios-prevented)
-    - [Container & Pod Security](#container--pod-security)
-    - [Network & Lateral Movement](#network--lateral-movement)
-    - [Supply Chain & Image Security](#supply-chain--image-security)
-    - [Secrets & Configuration](#secrets--configuration)
 15. [References](#15-references)
-    - [Infrastructure & Orchestration](#infrastructure--orchestration)
-    - [Security & Policy](#security--policy)
-    - [Observability](#observability)
-    - [Managed Kubernetes Services](#managed-kubernetes-services)
-    - [Standards & Documentation](#standards--documentation)
 
 ## 1. Overview
 
@@ -1206,8 +1197,6 @@ spec:
 
 This guide's security controls prevent real-world Kubernetes attacks commonly seen in production environments.
 
-### Container & Pod Security
-
 **Container Escape / Privilege Escalation**
 
 - Attack: Exploiting privileged containers or dangerous capabilities to break out and access host
@@ -1222,8 +1211,6 @@ This guide's security controls prevent real-world Kubernetes attacks commonly se
 
 - Attack: Malicious/buggy pods consuming all cluster resources causing outages
 - Mitigated by: Kyverno requiring CPU/memory limits, ResourceQuotas per namespace, pod disruption budgets, cluster autoscaling
-
-### Network & Lateral Movement
 
 **Lateral Movement via Network Access**
 
@@ -1240,8 +1227,6 @@ This guide's security controls prevent real-world Kubernetes attacks commonly se
 - Attack: Unauthorized access to Kubernetes API to modify cluster or steal secrets
 - Mitigated by: Managed Kubernetes hardened control plane, API access restricted to VPN/bastion, RBAC with least privilege, audit logging
 
-### Supply Chain & Image Security
-
 **Supply Chain Attack via Unsigned Images**
 
 - Attack: Malicious container images pushed to registry and deployed to production
@@ -1251,8 +1236,6 @@ This guide's security controls prevent real-world Kubernetes attacks commonly se
 
 - Attack: Exploiting publicly disclosed vulnerabilities in outdated images
 - Mitigated by: Trivy Operator continuous scanning, alerts on HIGH/CRITICAL with patches, automated image rebuilds with Copacetic, GitOps deployment
-
-### Secrets & Configuration
 
 **Secrets Exposure in Pod Configs**
 
@@ -1268,29 +1251,29 @@ This guide's security controls prevent real-world Kubernetes attacks commonly se
 
 ### Infrastructure & Orchestration
 
-- [Terraform](https://www.terraform.io/) - Infrastructure as code
-- [Helm](https://helm.sh/) - Kubernetes package manager
-- [ArgoCD](https://argo-cd.readthedocs.io/) - GitOps continuous delivery
+- [Terraform](https://www.terraform.io/)
+- [Helm](https://helm.sh/)
+- [ArgoCD](https://argo-cd.readthedocs.io/)
 
 ### Security & Policy
 
-- [Kyverno](https://github.com/kyverno/kyverno) - Kubernetes-native policy engine
-- [Trivy Operator](https://github.com/aquasecurity/trivy-operator) - Continuous vulnerability scanning
-- [Istio](https://github.com/istio/istio) - Service mesh for mTLS and traffic management
-- [Falco](https://github.com/falcosecurity/falco) - Runtime threat detection
-- [Cosign](https://github.com/sigstore/cosign) - Container signing and verification
+- [Kyverno](https://github.com/kyverno/kyverno)
+- [Trivy Operator](https://github.com/aquasecurity/trivy-operator)
+- [Istio](https://github.com/istio/istio)
+- [Falco](https://github.com/falcosecurity/falco)
+- [Cosign](https://github.com/sigstore/cosign)
 
 ### Observability
 
-- [Prometheus](https://prometheus.io/) - Metrics collection and monitoring
-- [Grafana](https://grafana.com/) - Visualization and dashboards
-- [Fluentd](https://github.com/fluent/fluentd) - Log collection and forwarding
+- [Prometheus](https://prometheus.io/)
+- [Grafana](https://grafana.com/)
+- [Fluentd](https://github.com/fluent/fluentd)
 
 ### Managed Kubernetes Services
 
-- [AWS EKS](https://aws.amazon.com/eks/) - Amazon Elastic Kubernetes Service
-- [GCP GKE](https://cloud.google.com/kubernetes-engine) - Google Kubernetes Engine
-- [Azure AKS](https://azure.microsoft.com/en-us/services/kubernetes-service/) - Azure Kubernetes Service
+- [AWS EKS](https://aws.amazon.com/eks/)
+- [GCP GKE](https://cloud.google.com/kubernetes-engine)
+- [Azure AKS](https://azure.microsoft.com/en-us/services/kubernetes-service/)
 
 ### Standards & Documentation
 

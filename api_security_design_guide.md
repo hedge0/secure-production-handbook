@@ -1,6 +1,6 @@
 # API Security Design Guide
 
-**Last Updated:** January 23, 2026
+**Last Updated:** January 26, 2026
 
 A cloud-agnostic guide for building production-ready APIs with a practical blend of security and performance. This guide includes industry best practices and lessons learned from real-world implementations across serverless and traditional architectures.
 
@@ -78,10 +78,6 @@ A cloud-agnostic guide for building production-ready APIs with a practical blend
     - [Containment & Recovery](#containment--recovery)
     - [Post-Incident](#post-incident)
 16. [Attack Scenarios Prevented](#16-attack-scenarios-prevented)
-    - [Authentication & Authorization Attacks](#authentication--authorization-attacks)
-    - [Injection & Input Attacks](#injection--input-attacks)
-    - [Availability & Performance Attacks](#availability--performance-attacks)
-    - [Supply Chain & Dependencies](#supply-chain--dependencies)
 17. [References](#17-references)
 
 ## 1. Overview
@@ -1605,8 +1601,6 @@ Respond to security incidents quickly and effectively to minimize damage.
 
 This guide's security controls prevent real-world attacks commonly seen in production environments.
 
-### Authentication & Authorization Attacks
-
 **Credential Stuffing**
 
 - Attack: Stolen username/password pairs used for unauthorized access
@@ -1621,8 +1615,6 @@ This guide's security controls prevent real-world attacks commonly seen in produ
 
 - Attack: Leaked keys from GitHub or client-side code used to access services
 - Mitigated by: Secret scanning (TruffleHog, GitHub), secrets in external vaults, per-user rate limiting, automated rotation
-
-### Injection & Input Attacks
 
 **SQL Injection**
 
@@ -1639,8 +1631,6 @@ This guide's security controls prevent real-world attacks commonly seen in produ
 - Attack: Extracting sensitive data from verbose errors (database details, file paths, internal IPs)
 - Mitigated by: Generic external error messages, detailed internal-only logging, request IDs for support, consistent error structure
 
-### Availability & Performance Attacks
-
 **DDoS / Resource Exhaustion**
 
 - Attack: Overwhelming API with requests to cause degradation or outage
@@ -1651,8 +1641,6 @@ This guide's security controls prevent real-world attacks commonly seen in produ
 - Attack: Serving user A's cached data to user B, leaking sensitive information
 - Mitigated by: Cache keys include authentication context, `Cache-Control: no-store` on sensitive endpoints, proper CORS, authentication-aware API Gateway caching
 
-### Supply Chain & Dependencies
-
 **Dependency Vulnerabilities**
 
 - Attack: Exploiting known vulnerabilities in outdated libraries
@@ -1662,26 +1650,26 @@ This guide's security controls prevent real-world attacks commonly seen in produ
 
 ### Security Tools
 
-- [Dependabot](https://github.com/dependabot/dependabot-core) - Automated dependency updates
-- [TruffleHog](https://github.com/trufflesecurity/trufflehog) - Secret scanning
-- [Opengrep](https://github.com/opengrep/opengrep) - Static application security testing
-- [Coraza](https://github.com/corazawaf/coraza) - Web application firewall
-- [ModSecurity](https://github.com/owasp-modsecurity/ModSecurity) - Web application firewall engine
+- [Dependabot](https://github.com/dependabot/dependabot-core)
+- [TruffleHog](https://github.com/trufflesecurity/trufflehog)
+- [Opengrep](https://github.com/opengrep/opengrep)
+- [Coraza](https://github.com/corazawaf/coraza)
+- [ModSecurity](https://github.com/owasp-modsecurity/ModSecurity)
 
 ### Validation & Rate Limiting
 
-- [Zod](https://github.com/colinhacks/zod) - TypeScript schema validation
-- [Joi](https://github.com/hapijs/joi) - JavaScript schema validation
-- [Pydantic](https://github.com/pydantic/pydantic) - Python data validation
-- [go-playground/validator](https://github.com/go-playground/validator) - Go struct validation
-- [express-rate-limit](https://github.com/express-rate-limit/express-rate-limit) - Node.js rate limiting
-- [slowapi](https://github.com/laurentS/slowapi) - Python rate limiting
-- [tollbooth](https://github.com/didip/tollbooth) - Go rate limiting
+- [Zod](https://github.com/colinhacks/zod)
+- [Joi](https://github.com/hapijs/joi)
+- [Pydantic](https://github.com/pydantic/pydantic)
+- [go-playground/validator](https://github.com/go-playground/validator)
+- [express-rate-limit](https://github.com/express-rate-limit/express-rate-limit)
+- [slowapi](https://github.com/laurentS/slowapi)
+- [tollbooth](https://github.com/didip/tollbooth)
 
 ### Standards & Documentation
 
-- [OWASP Top 10](https://owasp.org/www-project-top-ten/) - Web application security risks
-- [OWASP API Security Top 10](https://owasp.org/www-project-api-security/) - API security risks
-- [OpenAPI Specification](https://swagger.io/specification/) - API documentation standard
-- [OAuth 2.0](https://oauth.net/2/) - Authorization framework
-- [JWT](https://jwt.io/) - JSON Web Tokens standard
+- [OWASP Top 10](https://owasp.org/www-project-top-ten/)
+- [OWASP API Security Top 10](https://owasp.org/www-project-api-security/)
+- [OpenAPI Specification](https://swagger.io/specification/)
+- [OAuth 2.0](https://oauth.net/2/)
+- [JWT](https://jwt.io/)

@@ -1,6 +1,6 @@
 # Database Security Guide
 
-**Last Updated:** January 23, 2026
+**Last Updated:** January 26, 2026
 
 A cloud-agnostic guide for securing production PostgreSQL databases with defense-in-depth security, high availability, and disaster recovery. This guide includes industry best practices and lessons learned from real-world implementations.
 
@@ -1131,23 +1131,23 @@ This guide's security controls prevent real-world database attacks.
 ### Database Systems
 
 - [PostgreSQL Documentation](https://www.postgresql.org/docs/)
-- [PgBouncer](https://www.pgbouncer.org/) - PostgreSQL connection pooler
-- [pgaudit](https://github.com/pgaudit/pgaudit) - PostgreSQL audit logging
+- [PgBouncer](https://www.pgbouncer.org/)
+- [pgaudit](https://github.com/pgaudit/pgaudit)
 
 ### Managed Database Services
 
-- [AWS RDS](https://aws.amazon.com/rds/) - Amazon Relational Database Service
-- [AWS RDS Proxy](https://aws.amazon.com/rds/proxy/) - Connection pooling for RDS
-- [GCP Cloud SQL](https://cloud.google.com/sql) - Google Cloud SQL
+- [AWS RDS](https://aws.amazon.com/rds/)
+- [AWS RDS Proxy](https://aws.amazon.com/rds/proxy/)
+- [GCP Cloud SQL](https://cloud.google.com/sql)
 - [Azure Database for PostgreSQL](https://azure.microsoft.com/en-us/products/postgresql/)
 
 ### Encryption & Key Management
 
-- [AWS KMS](https://aws.amazon.com/kms/) - Key Management Service
-- [AWS Encryption SDK](https://docs.aws.amazon.com/encryption-sdk/) - Client-side encryption
-- [GCP Cloud KMS](https://cloud.google.com/kms) - Google Cloud Key Management
+- [AWS KMS](https://aws.amazon.com/kms/)
+- [AWS Encryption SDK](https://docs.aws.amazon.com/encryption-sdk/)
+- [GCP Cloud KMS](https://cloud.google.com/kms)
 - [Azure Key Vault](https://azure.microsoft.com/en-us/services/key-vault/)
-- [Google Tink](https://github.com/google/tink) - Multi-language crypto library
+- [Google Tink](https://github.com/google/tink)
 
 ### Secrets Management
 
