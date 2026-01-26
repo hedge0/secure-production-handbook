@@ -118,6 +118,31 @@ Build production container image using multi-stage Dockerfile that progressively
 - Examples: `registry.example.com/nginx:1.25.3-amd64`, `registry.example.com/python:3.11-arm64`
 - Never use `latest` tag - always pin specific versions
 
+**Why Explicit Architecture Tags for Private Registries:**
+
+For production deployments, always use explicit architecture tags (`-amd64`, `-arm64`) rather than manifest lists:
+
+**Security advantage:**
+
+- Images are signed BEFORE push (Stage 6), eliminating unsigned window
+- Manifest lists must be created AFTER pushing images, creating brief unsigned window
+- Even sub-second unsigned windows are exploitable (attacker can inject malicious manifest)
+- Explicit tags ensure Kubernetes always pulls signed, verified images
+
+**Operational advantages:**
+
+- Deployment YAML explicitly declares architecture: `image: registry.example.com/app:1.0.0-amd64`
+- No ambiguity about which image gets pulled
+- Easier troubleshooting (image tag matches actual architecture)
+- Kyverno signature verification works on actual image, not manifest reference
+
+**When manifest lists make sense:**
+
+- Public registries (Docker Hub, Quay.io) where end users don't control architecture
+- Multi-arch base images for local development (`docker pull nginx` auto-selects)
+
+**For production:** Explicit architecture tags prevent the manifest unsigned window vulnerability while maintaining clear, auditable image references.
+
 **Builder Stage**: Start with Docker Hardened Image with dev tools
 
 - Install build dependencies
