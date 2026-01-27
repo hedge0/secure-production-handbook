@@ -85,6 +85,22 @@ A cloud-agnostic guide for building production-ready APIs with a practical blend
 
 This guide outlines a production-grade API design approach that balances security, performance, and maintainability. The patterns are cloud-agnostic and work with major cloud providers (AWS, GCP, Azure) and their respective services for serverless functions, container orchestration, secrets management, and logging.
 
+**Common Use Cases:**
+
+- REST APIs for web and mobile applications
+- Serverless APIs (Lambda, Cloud Run, Azure Functions)
+- Microservices inter-service communication
+- Third-party integrations and partner APIs
+- Webhook endpoints for event notifications
+- Public APIs with rate limiting and authentication
+
+**Real-World Breaches:**
+
+- **Optus (2022)**: API vulnerability exposed 10M+ customer records, including passports and driver's licenses
+- **T-Mobile (2021)**: API flaw exposed 54M+ customer data through unauthorized access
+- **Peloton (2021)**: Unauthenticated API leaked private user data and location information
+- **LinkedIn (2021)**: API scraping vulnerability exposed data of 700M users
+
 **Core Principles:**
 
 - **Security First**: Defense in depth from edge to application to data layer

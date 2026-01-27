@@ -59,7 +59,22 @@ A cloud-agnostic guide for building production-ready Kubernetes clusters with de
 
 This guide outlines a production-grade Kubernetes architecture that prioritizes security, reliability, and operational excellence. The patterns are cloud-agnostic and work with managed Kubernetes services (AWS EKS, GCP GKE, Azure AKS) and their respective cloud-native services for networking, databases, secrets management, and observability.
 
-**Target Audience:** Organizations with 50+ engineers, 20+ microservices, and dedicated platform teams. If you're a small team or startup, see "Do You Need Kubernetes?" below - you likely should use serverless or Fargate instead.
+**Common Use Cases:**
+
+- Microservices deployments at scale (20+ services)
+- Multi-tenant SaaS platforms
+- CI/CD pipeline execution and build environments
+- Batch processing and data pipelines
+- Stateful applications (databases, message queues via operators)
+- Complex service mesh architectures
+- High-availability web applications
+
+**Real-World Breaches:**
+
+- **Tesla (2018)**: Exposed Kubernetes dashboard led to cryptomining, AWS credentials stolen
+- **LA Times (2019)**: Misconfigured Kubernetes cluster exposed internal systems
+- **Shopify (2020)**: RBAC misconfiguration allowed unauthorized access
+- **Multiple Organizations**: Shodan regularly finds thousands of publicly exposed Kubernetes dashboards
 
 **Core Principles:**
 

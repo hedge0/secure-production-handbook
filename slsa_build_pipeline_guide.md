@@ -1,6 +1,6 @@
 # SLSA Build Pipeline Guide
 
-**Last Updated:** January 26, 2026
+**Last Updated:** January 27, 2026
 
 A cloud-agnostic guide for building secure, verifiable container images with SLSA Level 3 compliance using GitHub Actions. This guide includes industry best practices and lessons learned from real-world production implementations.
 
@@ -32,7 +32,23 @@ This guide outlines a production-grade container image build pipeline that achie
 
 **Build Platform**: GitHub Actions is used throughout this guide as it is one of the few CI/CD platforms officially verified for SLSA Level 3 compliance. The ephemeral runners, isolated build environments, and tamper-evident audit logs meet SLSA's non-falsifiable provenance requirements.
 
-### SLSA Level 3 Requirements
+**Common Use Cases:**
+
+- Container image building and signing for production deployments
+- Software artifact generation with provenance attestation
+- Dependency vulnerability scanning and automated patching
+- SBOM (Software Bill of Materials) generation for compliance
+- Supply chain attestation for regulated industries
+- Multi-stage CI/CD pipelines with security gates
+
+**Real-World Breaches:**
+
+- **SolarWinds (2020)**: Build system compromise affected 18,000+ organizations, $100M+ impact
+- **Codecov (2021)**: CI/CD environment compromise exposed secrets from thousands of customers
+- **Log4Shell (2021)**: Vulnerable dependency in supply chain affected millions of applications
+- **PyPI/npm attacks (ongoing)**: Malicious packages with typosquatting, dependency confusion
+
+**SLSA Level 3 Requirements:**
 
 - **Source**: Version-controlled with verified history
 - **Review**: At least one-person review recommended

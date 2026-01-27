@@ -1,6 +1,6 @@
 # Database Security Guide
 
-**Last Updated:** January 26, 2026
+**Last Updated:** January 27, 2026
 
 A cloud-agnostic guide for securing production PostgreSQL databases with defense-in-depth security, high availability, and disaster recovery. This guide includes industry best practices and lessons learned from real-world implementations.
 
@@ -44,6 +44,23 @@ A cloud-agnostic guide for securing production PostgreSQL databases with defense
 ## 1. Overview
 
 Databases store critical business data, user information, and application state. A database breach can result in massive data loss, regulatory fines, and reputational damage. This guide provides production-ready patterns for securing PostgreSQL databases across cloud providers.
+
+**Common Use Cases:**
+
+- Application state and session storage
+- User authentication data (credentials, profiles, preferences)
+- Financial transactions and payment processing
+- Healthcare records and PII (HIPAA compliance)
+- E-commerce orders and inventory
+- Analytics and reporting data
+- Audit trails and compliance logging
+
+**Real-World Breaches:**
+
+- **Uber (2016)**: MongoDB breach exposed 57M users due to stolen credentials
+- **Equifax (2017)**: Database vulnerability exposed 147M records, $700M settlement
+- **Capital One (2019)**: AWS RDS misconfiguration exposed 100M+ credit applications
+- **MGM Resorts (2019)**: Unencrypted database exposed 142M guest records
 
 **Core Principles:**
 
