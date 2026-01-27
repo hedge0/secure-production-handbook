@@ -43,7 +43,7 @@ A cloud-agnostic guide for securing production PostgreSQL databases with defense
 
 ## 1. Overview
 
-Databases store critical business data, user information, and application state. A database breach can result in massive data loss, regulatory fines, and reputational damage. This guide provides production-ready patterns for securing PostgreSQL databases across cloud providers.
+This guide provides production-ready patterns for securing PostgreSQL databases across cloud providers. Databases store critical business data, user information, and application state. A database breach can result in massive data loss, regulatory fines, and reputational damage.
 
 **Common Use Cases:**
 

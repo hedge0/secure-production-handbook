@@ -30,8 +30,6 @@ A cloud-agnostic guide for building secure, verifiable container images with SLS
 
 This guide outlines a production-grade container image build pipeline that achieves SLSA (Supply-chain Levels for Software Artifacts) Level 3 compliance. The pipeline is cloud-agnostic and works with any container registry that supports signed images (such as AWS ECR, Google GCR/Artifact Registry, Azure ACR, and Harbor) and object storage provider (S3, GCS, Azure Blob Storage).
 
-**Build Platform**: GitHub Actions is used throughout this guide as it is one of the few CI/CD platforms officially verified for SLSA Level 3 compliance. The ephemeral runners, isolated build environments, and tamper-evident audit logs meet SLSA's non-falsifiable provenance requirements.
-
 **Common Use Cases:**
 
 - Container image building and signing for production deployments
@@ -67,6 +65,10 @@ This guide outlines a production-grade container image build pipeline that achie
 - **[SLSA GitHub Generator](https://github.com/slsa-framework/slsa-github-generator)**: Official SLSA Level 3 provenance generator for GitHub Actions (required for non-falsifiable attestations)
 - **[Syft](https://github.com/anchore/syft)**: SBOM generation tool (alternative to Trivy)
 - **[Grype](https://github.com/anchore/grype)**: Vulnerability scanner (alternative to Trivy)
+
+**Build Platform:**
+
+This guide uses GitHub Actions as it is one of the few CI/CD platforms officially verified for SLSA Level 3 compliance. The ephemeral runners, isolated build environments, and tamper-evident audit logs meet SLSA's non-falsifiable provenance requirements. While the security patterns are applicable to other CI/CD platforms, GitHub Actions is specifically recommended for achieving SLSA Level 3.
 
 ### External Services
 

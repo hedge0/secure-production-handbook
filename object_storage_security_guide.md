@@ -37,7 +37,7 @@ A cloud-agnostic guide for securing production object storage (S3, GCS, Azure Bl
 
 ## 1. Overview
 
-Object storage (S3, GCS, Azure Blob Storage) is critical infrastructure for backups, user uploads, compliance data, and data lakes. Misconfigured object storage is one of the most common causes of data breaches in cloud environments.
+This guide outlines production-ready patterns for securing object storage (S3, GCS, Azure Blob Storage) for backups, user uploads, compliance data, and data lakes. Misconfigured object storage is one of the most common causes of data breaches in cloud environments.
 
 **Common Use Cases:**
 
@@ -74,12 +74,12 @@ Object storage (S3, GCS, Azure Blob Storage) is critical infrastructure for back
 
 Cloud-agnostic service options for object storage, key management, and logging.
 
-| Service Category                 | AWS                      | GCP                        | Azure                             |
-| -------------------------------- | ------------------------ | -------------------------- | --------------------------------- |
-| **Object Storage** (required)    | S3                       | Cloud Storage (GCS)        | Blob Storage                      |
-| **Key Management** (required)    | KMS                      | Cloud KMS                  | Key Vault                         |
-| **Logging & SIEM** (required)    | CloudTrail, CloudWatch   | Cloud Logging              | Monitor                           |
-| **Cold Storage** (compliance)    | S3 Glacier Deep Archive  | Archive Storage            | Archive Blob Storage              |
+| Service Category              | AWS                     | GCP                 | Azure                |
+| ----------------------------- | ----------------------- | ------------------- | -------------------- |
+| **Object Storage** (required) | S3                      | Cloud Storage (GCS) | Blob Storage         |
+| **Key Management** (required) | KMS                     | Cloud KMS           | Key Vault            |
+| **Logging & SIEM** (required) | CloudTrail, CloudWatch  | Cloud Logging       | Monitor              |
+| **Cold Storage** (compliance) | S3 Glacier Deep Archive | Archive Storage     | Archive Blob Storage |
 
 ## 3. Access Control
 
@@ -88,11 +88,13 @@ Access control is the most critical aspect of object storage security. Misconfig
 ### Bucket Policies vs IAM Policies
 
 **Use IAM Policies When:**
+
 - Controlling what actions a user/service can perform across multiple buckets
 - Managing permissions for internal users and services
 - Example: "This Lambda function can read from any bucket in the account"
 
 **Use Bucket Policies When:**
+
 - Controlling access to a specific bucket from multiple sources
 - Granting cross-account access
 - Enforcing encryption requirements on uploads
@@ -151,11 +153,13 @@ az storage account update \
 ```
 
 **What Public Access Block Prevents:**
+
 - Accidental public ACLs on objects
 - Bucket policies that grant public access
 - Anonymous public access to buckets
 
 **When to Allow Public Access:**
+
 - Static website hosting (use CloudFront/CDN with origin access control instead)
 - Public datasets (carefully configure with specific public prefixes only)
 
@@ -200,12 +204,14 @@ url = blob.generate_signed_url(
 ```
 
 **Use Cases:**
+
 - User file downloads (documents, images)
 - File uploads from client applications
 - Temporary access for external partners
 - Avoiding credentials in client-side code
 
 **Security Notes:**
+
 - Keep expiration times short (minutes to hours, not days)
 - URLs are bearer tokens - anyone with the URL has access
 - Consider IP restrictions for sensitive data
@@ -233,10 +239,7 @@ aws ec2 create-vpc-endpoint \
       "Effect": "Deny",
       "Principal": "*",
       "Action": "s3:*",
-      "Resource": [
-        "arn:aws:s3:::my-bucket",
-        "arn:aws:s3:::my-bucket/*"
-      ],
+      "Resource": ["arn:aws:s3:::my-bucket", "arn:aws:s3:::my-bucket/*"],
       "Condition": {
         "StringNotEquals": {
           "aws:SourceVpce": "vpce-1a2b3c4d"
@@ -258,6 +261,7 @@ gcloud compute addresses create my-psc-address \
 ```
 
 **Benefits:**
+
 - Traffic never leaves cloud provider's network
 - Reduced data transfer costs
 - Better security (no internet exposure)
@@ -275,16 +279,19 @@ Encrypt all data at rest and in transit. Most cloud providers encrypt by default
 **Encryption Options:**
 
 **SSE-S3 / SSE-GCS (Managed Keys):**
+
 - Cloud provider manages encryption keys
 - Simplest option, enabled by default
 - Good for most use cases
 
 **SSE-KMS / CMEK (Customer Master Keys):**
+
 - You control key rotation and access policies
 - Audit key usage in CloudTrail/Cloud Logging
 - Required for compliance (HIPAA, PCI-DSS)
 
 **SSE-C / CSEK (Customer-Provided Keys):**
+
 - You provide encryption key with each request
 - You manage key storage and rotation
 - Rare use case (extreme control requirements)
@@ -306,6 +313,7 @@ aws s3api put-bucket-encryption \
 ```
 
 **When to Use Each:**
+
 - **SSE-S3/SSE-GCS**: Default for most buckets
 - **SSE-KMS/CMEK**: Compliance requirements, audit trails, PHI/PII data
 - **SSE-C/CSEK**: Extreme security requirements (rare)
@@ -324,10 +332,7 @@ Always use HTTPS/TLS for object storage access.
       "Effect": "Deny",
       "Principal": "*",
       "Action": "s3:*",
-      "Resource": [
-        "arn:aws:s3:::my-bucket",
-        "arn:aws:s3:::my-bucket/*"
-      ],
+      "Resource": ["arn:aws:s3:::my-bucket", "arn:aws:s3:::my-bucket/*"],
       "Condition": {
         "Bool": {
           "aws:SecureTransport": "false"
@@ -339,6 +344,7 @@ Always use HTTPS/TLS for object storage access.
 ```
 
 **Best Practices:**
+
 - Always use HTTPS endpoints (`https://s3.amazonaws.com`, not `http://`)
 - Enforce TLS 1.2 or higher
 - Deny non-HTTPS access via bucket policy
@@ -369,6 +375,7 @@ gcloud kms keys versions create \
 ```
 
 **Rotation Frequency:**
+
 - **Automated rotation**: Annually (AWS KMS default)
 - **Manual rotation**: Quarterly or after security incidents
 - **Compliance requirements**: Follow HIPAA (annually), PCI-DSS (annually)
@@ -394,12 +401,14 @@ gcloud storage buckets update gs://my-bucket --versioning
 ```
 
 **How Versioning Works:**
+
 - Every object modification creates a new version
 - Delete operations create a delete marker (object recoverable)
 - Old versions remain until explicitly deleted
 - Cost: You pay for storage of all versions
 
 **Use Cases:**
+
 - Accidental deletion recovery
 - Ransomware protection (restore previous versions)
 - Compliance (maintain history of changes)
@@ -434,21 +443,25 @@ aws s3api put-object-lock-configuration \
 **Retention Modes:**
 
 **COMPLIANCE Mode:**
+
 - No one can delete or modify (not even root user)
 - Cannot shorten retention period
 - Use for: Regulatory compliance (SEC, FINRA, HIPAA)
 
 **GOVERNANCE Mode:**
+
 - Users with special permissions can delete
 - Retention period can be shortened
 - Use for: Internal policies, testing
 
 **Legal Hold:**
+
 - Indefinite retention until removed
 - Independent of retention period
 - Use for: Litigation, investigations
 
 **Use Cases:**
+
 - Financial records (7-year retention)
 - Healthcare records (HIPAA requirements)
 - Audit logs (SOC2, PCI-DSS)
@@ -468,6 +481,7 @@ aws s3api put-bucket-versioning \
 ```
 
 **Benefits:**
+
 - Prevents accidental deletion by compromised credentials
 - Additional layer of protection for critical data
 - Compliance requirement for some regulations
@@ -480,14 +494,14 @@ Different storage classes optimize cost for different access patterns.
 
 **AWS S3 Storage Classes:**
 
-| Class                | Access Pattern              | Cost (relative) | Retrieval Time    |
-| -------------------- | --------------------------- | --------------- | ----------------- |
-| S3 Standard          | Frequent access             | High            | Instant           |
-| S3 Intelligent-Tier  | Unknown/changing access     | Auto-optimized  | Instant           |
-| S3 Standard-IA       | Infrequent access           | Medium          | Instant           |
-| S3 Glacier Instant   | Archive, instant retrieval  | Low             | Instant           |
-| S3 Glacier Flexible  | Archive, rare retrieval     | Very Low        | Minutes-hours     |
-| S3 Glacier Deep      | Long-term archive           | Lowest          | 12 hours          |
+| Class               | Access Pattern             | Cost (relative) | Retrieval Time |
+| ------------------- | -------------------------- | --------------- | -------------- |
+| S3 Standard         | Frequent access            | High            | Instant        |
+| S3 Intelligent-Tier | Unknown/changing access    | Auto-optimized  | Instant        |
+| S3 Standard-IA      | Infrequent access          | Medium          | Instant        |
+| S3 Glacier Instant  | Archive, instant retrieval | Low             | Instant        |
+| S3 Glacier Flexible | Archive, rare retrieval    | Very Low        | Minutes-hours  |
+| S3 Glacier Deep     | Long-term archive          | Lowest          | 12 hours       |
 
 **GCP Cloud Storage Classes:**
 
@@ -566,6 +580,7 @@ Automatically transition objects to cheaper storage classes over time.
 ```
 
 **Common Patterns:**
+
 - **Active data**: Standard (0-30 days)
 - **Recent backups**: Standard-IA (30-90 days)
 - **Old backups**: Glacier (90-365 days)
@@ -575,24 +590,28 @@ Automatically transition objects to cheaper storage classes over time.
 ### Compliance Requirements
 
 **GDPR (General Data Protection Regulation):**
+
 - Right to deletion (delete user data on request)
 - Data residency (store data in specific regions)
 - Breach notification (72 hours)
 - Use versioning + object lock for audit trails
 
 **HIPAA (Health Insurance Portability and Accountability Act):**
+
 - Encrypt all PHI (SSE-KMS/CMEK required)
 - Business Associate Agreement (BAA) with cloud provider
 - Access logging and audit trails
 - 6-year retention for medical records
 
 **PCI-DSS (Payment Card Industry Data Security Standard):**
+
 - Encrypt cardholder data (SSE-KMS/CMEK)
 - Restrict access (principle of least privilege)
 - Log all access to cardholder data
 - Quarterly key rotation
 
 **SOC2 (System and Organization Controls):**
+
 - Access controls and logging
 - Encryption at rest and in transit
 - Regular access reviews
@@ -626,6 +645,7 @@ gcloud storage buckets update gs://my-bucket \
 ```
 
 **What Gets Logged:**
+
 - Requester account/IP address
 - Bucket and object key
 - Request type (GET, PUT, DELETE)
@@ -654,6 +674,7 @@ aws cloudtrail put-event-selectors \
 ```
 
 **What CloudTrail Logs:**
+
 - GetObject, PutObject, DeleteObject operations
 - IAM principal (who made the request)
 - Source IP address
@@ -683,6 +704,7 @@ aws cloudwatch put-metric-alarm \
 ```
 
 **Key Alerts to Configure:**
+
 - Bucket policy changes (especially public access grants)
 - Object deletions in versioned buckets
 - Failed authentication attempts
