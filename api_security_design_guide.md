@@ -1,6 +1,6 @@
 # API Security Design Guide
 
-**Last Updated:** January 26, 2026
+**Last Updated:** January 27, 2026
 
 A cloud-agnostic guide for building production-ready APIs with a practical blend of security and performance. This guide includes industry best practices and lessons learned from real-world implementations across serverless and traditional architectures.
 
@@ -84,12 +84,40 @@ A cloud-agnostic guide for building production-ready APIs with a practical blend
 
 This guide outlines a production-grade API design approach that balances security, performance, and maintainability. The patterns are cloud-agnostic and work with major cloud providers (AWS, GCP, Azure) and their respective services for serverless functions, container orchestration, secrets management, and logging.
 
+**⚠️ Architecture Reality Check**
+
+**For 90% of teams: Start with serverless (Lambda, Cloud Run, Azure Functions)**
+
+This guide covers security patterns that work across all deployment models, but your deployment choice matters:
+
+- **Serverless** (Lambda, Cloud Run, Azure Functions) - **Recommended for teams with <50 engineers**
+
+  - Zero operational overhead (no servers, patching, scaling config)
+  - Pay only for actual usage ($0-50/month for most startups)
+  - Handles millions of requests with zero infrastructure management
+  - 1 engineer can manage entire infrastructure
+  - See Section 3 for detailed comparison
+
+- **Fargate/Managed Containers** - For WebSockets, streaming, persistent connections
+
+  - Low operational overhead (no server management)
+  - No cold starts
+  - Still managed by cloud provider
+
+- **Kubernetes** - For large organizations (50+ services, 50+ engineers)
+  - High operational complexity
+  - Requires dedicated platform team (3-5 engineers minimum)
+  - Only needed at significant scale
+
+**The security patterns in this guide (authentication, rate limiting, encryption, logging) apply regardless of deployment model. Choose the simplest infrastructure that meets your needs.**
+
 **Core Principles:**
 
 - **Security First**: Defense in depth from edge to application to data layer
 - **Performance Conscious**: Optimize for latency and throughput without compromising security
 - **Cloud Agnostic**: Works across AWS, GCP, Azure with equivalent services
 - **Production Ready**: Battle-tested patterns from real-world deployments
+- **Simplicity Preferred**: The best infrastructure decision is often the simplest one
 
 ## 2. Prerequisites
 
@@ -155,6 +183,9 @@ Choose the deployment model that matches your application's latency, traffic pat
 - Can tolerate 100-500ms cold start latency
 - Team lacks dedicated DevOps resources
 - Want to minimize operational complexity
+- **You have <50 engineers (RECOMMENDED for most teams)**
+- **Your traffic is <10M requests/month**
+- **You want to focus on product, not infrastructure**
 
 **Use Containers/VMs When:**
 
@@ -162,6 +193,19 @@ Choose the deployment model that matches your application's latency, traffic pat
 - Stateful services (WebSockets, streaming, persistent connections)
 - High, consistent traffic patterns where reserved capacity is cheaper
 - Need full control over runtime environment
+- You have 50+ engineers with dedicated platform/DevOps team
+
+**Cost Reality Check:**
+
+| Deployment Model                  | Monthly Cost | Operational Team | Best For                      |
+| --------------------------------- | ------------ | ---------------- | ----------------------------- |
+| **Serverless** (Lambda/Cloud Run) | $0-200       | 0-1 engineers    | Startups, MVPs, <50 engineers |
+| **Fargate/Managed Containers**    | $200-1000    | 1-2 engineers    | WebSockets, 10-50 engineers   |
+| **Kubernetes**                    | $1000-5000+  | 3-5 engineers    | 50+ services, 50+ engineers   |
+
+**Reality:** A single Lambda function can handle 10M+ requests/month. Your startup will run out of money debugging Kubernetes networking before you need horizontal pod autoscaling.
+
+**Recommendation:** Start with serverless. Migrate to containers only when you have concrete evidence that serverless limitations are blocking your business (persistent connections needed, cold starts impacting UX, costs exceed Fargate at scale).
 
 ### API Gateway Architecture
 

@@ -1,12 +1,13 @@
 # Kubernetes Security Architecture Guide
 
-**Last Updated:** January 26, 2026
+**Last Updated:** January 27, 2026
 
 A cloud-agnostic guide for building production-ready Kubernetes clusters with defense-in-depth security, high availability, and disaster recovery. This guide includes industry best practices and lessons learned from real-world production implementations.
 
 ## Table of Contents
 
 1. [Overview](#1-overview)
+   - [Do You Need Kubernetes?](#do-you-need-kubernetes)
 2. [Prerequisites](#2-prerequisites)
    - [Required Tools](#required-tools)
    - [External Services](#external-services)
@@ -58,6 +59,8 @@ A cloud-agnostic guide for building production-ready Kubernetes clusters with de
 
 This guide outlines a production-grade Kubernetes architecture that prioritizes security, reliability, and operational excellence. The patterns are cloud-agnostic and work with managed Kubernetes services (AWS EKS, GCP GKE, Azure AKS) and their respective cloud-native services for networking, databases, secrets management, and observability.
 
+**Target Audience:** Organizations with 50+ engineers, 20+ microservices, and dedicated platform teams. If you're a small team or startup, see "Do You Need Kubernetes?" below - you likely should use serverless or Fargate instead.
+
 **Core Principles:**
 
 - **Defense in Depth**: Multiple security layers from network to runtime
@@ -65,6 +68,74 @@ This guide outlines a production-grade Kubernetes architecture that prioritizes 
 - **High Availability**: Multi-AZ databases, automatic failover, point-in-time recovery
 - **Infrastructure as Code**: Versioned, reproducible infrastructure with Terraform and ArgoCD
 - **Separation of Concerns**: Isolated clusters for production workloads vs administrative tooling
+- **Operational Excellence**: Accept complexity only when scale demands it
+
+### Do You Need Kubernetes?
+
+**You probably DON'T need Kubernetes if:**
+
+- You have <50 engineers
+- You run <20 microservices
+- Your traffic is <10M requests/day
+- You don't have a dedicated platform/DevOps team (3-5 engineers minimum)
+- You're trying to look "cloud-native" but haven't validated the operational cost
+
+**What Kubernetes actually requires:**
+
+- 3-5 dedicated platform engineers to manage it properly
+- Expertise in: networking, security, storage, observability, GitOps
+- Operational complexity: YAML files, Helm charts, kubectl, service meshes, policy engines
+- Debugging: pod evictions, OOMKilled errors, image pull failures, DNS issues, network policies
+- Cost: $1000-5000+/month before application workloads
+
+**What to use instead:**
+
+**For Serverless Workloads (Recommended for <50 Engineers)**
+
+- **AWS**: Lambda + API Gateway + RDS Aurora
+- **GCP**: Cloud Run + Cloud SQL
+- **Azure**: Functions + Azure SQL
+
+**Why serverless is better for small teams:**
+
+- Zero operational overhead (no patching, scaling, YAML)
+- Pay only for usage ($0-200/month for most startups)
+- Infinite scale without configuration
+- 1 engineer can manage entire infrastructure
+- Deploy in minutes, not weeks
+
+**Trade-offs you should accept:**
+
+- Cold starts (100ms-3s) - acceptable for 95% of APIs
+- Stateless only (use managed databases for state)
+
+**For Container Workloads (If You Need WebSockets/Streaming)**
+
+- **AWS**: ECS Fargate + ALB + RDS
+- **GCP**: Cloud Run (supports WebSockets) + Cloud SQL
+- **Azure**: Container Instances + Azure SQL
+
+**Why Fargate over Kubernetes:**
+
+- No cluster to manage (AWS manages control plane AND workers)
+- No Kubernetes complexity (YAML, Helm, kubectl, service mesh)
+- Still get containers, load balancing, auto-scaling
+- 1/10th the operational complexity of K8s
+- $200-1000/month vs $1000-5000+/month for K8s
+
+**You ACTUALLY need Kubernetes when:**
+
+- You have 50+ microservices with complex inter-service networking
+- You need sophisticated service mesh (mTLS between hundreds of services)
+- You're cost-optimizing at massive scale (spot instances, bin packing, multi-tenancy)
+- You have a dedicated platform team (3-5+ engineers)
+- You run ML workloads requiring GPU orchestration
+- You need multi-tenancy isolation for SaaS products
+- You're at "Spotify scale" (not "we watched a KubeCon talk" scale)
+
+**Reality check:** Kubernetes killed more startups than server crashes ever did. A $50/month Fargate container can handle millions of requests. Your startup will run out of runway debugging networking issues long before you need horizontal pod autoscaling.
+
+**If you're still reading, you've validated you actually need Kubernetes. This guide is for you.**
 
 ## 2. Prerequisites
 
