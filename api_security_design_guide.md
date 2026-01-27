@@ -7,7 +7,6 @@ A cloud-agnostic guide for building production-ready APIs with a practical blend
 ## Table of Contents
 
 1. [Overview](#1-overview)
-   - [Architecture Decision: Do You Need Kubernetes?](#architecture-decision-do-you-need-kubernetes)
 2. [Prerequisites](#2-prerequisites)
    - [Required Tools](#required-tools)
    - [External Services](#external-services)
@@ -108,33 +107,6 @@ This guide outlines a production-grade API design approach that balances securit
 - **Cloud Agnostic**: Works across AWS, GCP, Azure with equivalent services
 - **Production Ready**: Battle-tested patterns from real-world deployments
 - **Simplicity Preferred**: The best infrastructure decision is often the simplest one
-
-### Architecture Decision: Do You Need Kubernetes?
-
-**For 90% of teams: Start with serverless (Lambda, Cloud Run, Azure Functions)**
-
-This guide covers security patterns that work across all deployment models, but your deployment choice matters:
-
-- **Serverless** (Lambda, Cloud Run, Azure Functions) - **Recommended for teams with <50 engineers**
-
-  - Zero operational overhead (no servers, patching, scaling config)
-  - Pay only for actual usage ($0-50/month for most startups)
-  - Handles millions of requests with zero infrastructure management
-  - 1 engineer can manage entire infrastructure
-  - See Section 3 for detailed comparison
-
-- **Fargate/Managed Containers** - For WebSockets, streaming, persistent connections
-
-  - Low operational overhead (no server management)
-  - No cold starts
-  - Still managed by cloud provider
-
-- **Kubernetes** - For large organizations (50+ services, 50+ engineers)
-  - High operational complexity
-  - Requires dedicated platform team (3-5 engineers minimum)
-  - Only needed at significant scale
-
-**The security patterns in this guide (authentication, rate limiting, encryption, logging) apply regardless of deployment model. Choose the simplest infrastructure that meets your needs.**
 
 ## 2. Prerequisites
 
