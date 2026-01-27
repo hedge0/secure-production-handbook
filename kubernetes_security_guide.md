@@ -1,4 +1,4 @@
-# Kubernetes Security Architecture Guide
+# Kubernetes Security Guide
 
 **Last Updated:** January 27, 2026
 
