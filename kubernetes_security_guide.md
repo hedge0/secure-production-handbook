@@ -851,8 +851,8 @@ environments/
 **Sensitive Data Handling:**
 
 - Mark sensitive outputs: `sensitive = true` (prevents console display, still in state)
-- Encrypt state files: Use KMS keys for S3/GCS/Azure backend encryption
-- Restrict state access: Least-privilege IAM policies for state bucket/table
+- Encrypt state files at rest in remote backend
+- Restrict state access with least-privilege permissions
 - Never commit secrets: Use vault references, not hardcoded values
 
 **Drift Detection:**
@@ -919,8 +919,8 @@ Upgrade process: Test in dev → review changelog → staging → production wit
 
 **State File Corruption/Deletion:**
 
-1. Enable S3 versioning on state bucket (required)
-2. Automated daily backups to separate bucket
+1. Enable versioning on state storage backend
+2. Automated daily backups to separate storage location
 3. Cross-region replication for critical state
 4. Recovery: Restore from version history or backup
 
@@ -933,12 +933,15 @@ Upgrade process: Test in dev → review changelog → staging → production wit
 
 ```bash
 #!/bin/bash
-# Daily state backup
+# Daily state backup (example for S3 backend)
 for ENV in dev staging production; do
+  # Copy state file to backup location with timestamp
   aws s3 cp s3://terraform-state/$ENV/terraform.tfstate \
     s3://terraform-state-backup/$ENV/terraform.tfstate.$(date +%Y%m%d)
 done
 ```
+
+**Note:** Backup command varies by backend (S3, GCS, Azure Blob). Adapt for your provider.
 
 **Key Takeaways:**
 

@@ -606,7 +606,7 @@ This guide's SLSA Level 3 pipeline prevents supply chain attacks targeting the s
 **Unsigned Artifact Tampering**
 
 - Attack: Modified SBOMs, vulnerability reports, or attestations after generation
-- Mitigated by: All artifacts signed with Cosign, signatures verified before trusting, artifacts in object storage (S3/GCS) with versioning/access controls, immutable artifact chain
+- Mitigated by: All artifacts signed with Cosign, signatures verified before trusting, artifacts stored in secure object storage with access controls, immutable artifact chain
 
 **Compromised Container Registry**
 
