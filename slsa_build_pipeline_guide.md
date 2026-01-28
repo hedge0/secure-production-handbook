@@ -1,6 +1,6 @@
 # SLSA Build Pipeline Guide
 
-**Last Updated:** January 27, 2026
+**Last Updated:** January 28, 2026
 
 A cloud-agnostic guide for building secure, verifiable container images with SLSA Level 3 compliance using GitHub Actions. This guide includes industry best practices and lessons learned from real-world production implementations.
 
@@ -320,6 +320,108 @@ Test that security hardening is properly applied:
 ### Stage 5: Security Artifacts Generation and Signing
 
 Generate SLSA provenance, SBOMs, vulnerability scan reports, sign all artifacts, and upload to object storage.
+
+**Complete GitHub Actions Workflow Example**:
+
+```yaml
+# .github/workflows/build-and-sign.yml
+name: Build, Scan, and Sign Container Image
+
+on:
+  push:
+    tags:
+      - "v*"
+
+env:
+  REGISTRY: registry.example.com
+  IMAGE_NAME: myapp
+
+permissions:
+  contents: read
+  id-token: write
+  packages: write
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
+
+      - name: Build and push image
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}
+
+      - name: Install Trivy
+        run: |
+          wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo apt-key add -
+          echo "deb https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" | sudo tee /etc/apt/sources.list.d/trivy.list
+          sudo apt-get update && sudo apt-get install -y trivy
+
+      - name: Scan image and generate SBOM
+        run: |
+          IMAGE=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}
+
+          # Vulnerability scan
+          trivy image --format json --output vulnerability-report.json $IMAGE
+
+          # Generate SBOMs
+          trivy image --format cyclonedx --output sbom-cyclonedx.json $IMAGE
+          trivy image --format spdx-json --output sbom-spdx.json $IMAGE
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign image with Cosign
+        run: |
+          IMAGE=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
+          cosign sign --yes $IMAGE
+
+      - name: Sign artifacts
+        run: |
+          for file in sbom-cyclonedx.json sbom-spdx.json vulnerability-report.json; do
+            cosign sign-blob --yes --bundle ${file}.bundle $file
+          done
+
+      - name: Upload artifacts to S3
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          VERSION=${{ github.ref_name }}
+          aws s3 cp sbom-cyclonedx.json s3://build-artifacts/sboms/${VERSION}/
+          aws s3 cp sbom-spdx.json s3://build-artifacts/sboms/${VERSION}/
+          aws s3 cp vulnerability-report.json s3://build-artifacts/scans/${VERSION}/
+
+  provenance:
+    needs: [build-and-push]
+    permissions:
+      id-token: write
+      contents: read
+      packages: write
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@v1.10.0
+    with:
+      image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+      digest: ${{ needs.build-and-push.outputs.digest }}
+      registry-username: ${{ secrets.REGISTRY_USERNAME }}
+    secrets:
+      registry-password: ${{ secrets.REGISTRY_PASSWORD }}
+```
 
 **SLSA Provenance Attestation**:
 

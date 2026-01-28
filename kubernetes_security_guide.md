@@ -1,6 +1,6 @@
 # Kubernetes Security Guide
 
-**Last Updated:** January 27, 2026
+**Last Updated:** January 28, 2026
 
 A cloud-agnostic guide for building production-ready Kubernetes clusters with defense-in-depth security, high availability, and disaster recovery. This guide includes industry best practices and lessons learned from real-world production implementations.
 
@@ -1063,7 +1063,7 @@ Implement least-privilege access control through Kubernetes RBAC and cloud provi
 - Use namespace-scoped Roles (not ClusterRoles) for applications
 - Grant minimal permissions: `get` only, avoid `list`, `watch`, `*` verbs
 
-**RBAC Example**:
+**RBAC Example (basic read-only)**:
 
 ```yaml
 apiVersion: v1
@@ -1094,6 +1094,79 @@ subjects:
 roleRef:
   kind: Role
   name: api-server-role
+  apiGroup: rbac.authorization.k8s.io
+```
+
+**Additional RBAC Example (developer read-only access for debugging)**:
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: developer-readonly
+  namespace: production
+rules:
+  # View pods and logs for debugging
+  - apiGroups: [""]
+    resources: ["pods", "pods/log"]
+    verbs: ["get", "list", "watch"]
+
+  # View deployments for status
+  - apiGroups: ["apps"]
+    resources: ["deployments", "replicasets"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: developers-binding
+  namespace: production
+subjects:
+  - kind: Group
+    name: developers
+    apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: Role
+  name: developer-readonly
+  apiGroup: rbac.authorization.k8s.io
+```
+
+**Additional RBAC Example (CI/CD deployer)**:
+
+```yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: cicd-deployer
+  namespace: production
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: cicd-deployer-role
+  namespace: production
+rules:
+  # Manage deployments for rolling updates
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "create", "update", "patch"]
+
+  # View pods to verify deployment
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: cicd-deployer-binding
+  namespace: production
+subjects:
+  - kind: ServiceAccount
+    name: cicd-deployer
+roleRef:
+  kind: Role
+  name: cicd-deployer-role
   apiGroup: rbac.authorization.k8s.io
 ```
 

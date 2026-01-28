@@ -1,6 +1,6 @@
 # API Security Design Guide
 
-**Last Updated:** January 27, 2026
+**Last Updated:** January 28, 2026
 
 A cloud-agnostic guide for building production-ready APIs with a practical blend of security and performance. This guide includes industry best practices and lessons learned from real-world implementations across serverless and traditional architectures.
 
@@ -999,6 +999,57 @@ Return **429 Too Many Requests** with retry information:
 - TypeScript/Node.js: [express-rate-limit](https://github.com/express-rate-limit/express-rate-limit), [rate-limiter-flexible](https://github.com/animir/node-rate-limiter-flexible)
 - Python: [slowapi](https://github.com/laurentS/slowapi), [flask-limiter](https://github.com/alisaifee/flask-limiter)
 - Go: [tollbooth](https://github.com/didip/tollbooth), [golang.org/x/time/rate](https://pkg.go.dev/golang.org/x/time/rate)
+
+**Rate limiting implementation with Redis (Node.js):**
+
+```typescript
+import Redis from "ioredis";
+import { Request, Response, NextFunction } from "express";
+
+const redis = new Redis(process.env.REDIS_URL);
+
+async function rateLimitMiddleware(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+  limit: number,
+  window: number // seconds
+) {
+  const key = req.user?.id || req.ip || "anonymous";
+  const redisKey = `ratelimit:${key}`;
+  const now = Date.now();
+  const windowStart = now - window * 1000;
+
+  // Remove old requests and count current
+  await redis.zremrangebyscore(redisKey, 0, windowStart);
+  const count = await redis.zcard(redisKey);
+
+  // Set rate limit headers
+  res.setHeader("X-RateLimit-Limit", limit);
+  res.setHeader("X-RateLimit-Remaining", Math.max(0, limit - count - 1));
+
+  if (count >= limit) {
+    return res.status(429).json({ error: "Rate limit exceeded" });
+  }
+
+  // Add current request
+  await redis.zadd(redisKey, now, `${now}-${Math.random()}`);
+  await redis.expire(redisKey, window);
+
+  next();
+}
+
+// Usage: Different limits for different endpoints
+app.post(
+  "/api/login",
+  (req, res, next) => rateLimitMiddleware(req, res, next, 5, 60) // 5 per minute
+);
+app.get(
+  "/api/data",
+  authenticate,
+  (req, res, next) => rateLimitMiddleware(req, res, next, 100, 3600) // 100 per hour
+);
+```
 
 ## 9. Error Handling & Responses
 
