@@ -1122,16 +1122,16 @@ Error tracking services like Sentry can automatically upload your source maps du
 
 - [React Security Best Practices](https://react.dev/learn/security)
 - [React Security Docs](https://legacy.reactjs.org/docs/dom-elements.html#dangerouslysetinnerhtml)
-- [TypeScript](https://www.typescriptlang.org/) - Type safety for production apps
+- [TypeScript](https://www.typescriptlang.org/)
 
 ### Security Tools
 
-- [TruffleHog](https://github.com/trufflesecurity/trufflehog) - Secret scanning
-- [Semgrep](https://semgrep.dev/) - SAST (AI-powered, paid)
-- [Opengrep](https://github.com/opengrep/opengrep) - SAST (open-source, free)
-- [Dependabot](https://github.com/dependabot) - Automated dependency updates
-- [npm audit](https://docs.npmjs.com/cli/v9/commands/npm-audit) - Dependency scanner
-- [DOMPurify](https://github.com/cure53/DOMPurify) - HTML sanitization
+- [TruffleHog](https://github.com/trufflesecurity/trufflehog)
+- [Semgrep](https://semgrep.dev/)
+- [Opengrep](https://github.com/opengrep/opengrep)
+- [Dependabot](https://github.com/dependabot)
+- [npm audit](https://docs.npmjs.com/cli/v9/commands/npm-audit)
+- [DOMPurify](https://github.com/cure53/DOMPurify)
 
 ### Web Security Standards
 
@@ -1149,5 +1149,5 @@ Error tracking services like Sentry can automatically upload your source maps du
 
 ### Security Testing
 
-- [SecurityHeaders.com](https://securityheaders.com/) - Test your headers
-- [Mozilla Observatory](https://observatory.mozilla.org/) - Security scan
+- [SecurityHeaders.com](https://securityheaders.com/)
+- [Mozilla Observatory](https://observatory.mozilla.org/)

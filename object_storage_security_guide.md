@@ -1,6 +1,6 @@
 # Object Storage Security Guide
 
-**Last Updated:** January 27, 2026
+**Last Updated:** January 28, 2026
 
 A cloud-agnostic guide for securing production object storage (S3, GCS, Azure Blob Storage) with defense-in-depth security, compliance, and disaster recovery. This guide includes industry best practices and lessons learned from real-world implementations.
 
@@ -756,7 +756,7 @@ This guide's security controls prevent real-world object storage attacks commonl
 
 ### Security Tools
 
-- [TruffleHog](https://github.com/trufflesecurity/trufflehog) - Secret scanning
+- [TruffleHog](https://github.com/trufflesecurity/trufflehog)
 - [AWS Access Analyzer](https://aws.amazon.com/iam/features/analyze-access/)
 - [GCP Asset Inventory](https://cloud.google.com/asset-inventory)
 

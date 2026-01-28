@@ -1,6 +1,6 @@
 # Data Pipeline Security Guide
 
-**Last Updated:** January 27, 2026
+**Last Updated:** January 28, 2026
 
 A cloud-agnostic guide focused on securing production data pipelines (Kafka for streaming, Spark for processing) with defense-in-depth security, high availability, and disaster recovery. This guide includes industry best practices and lessons learned from real-world implementations.
 
@@ -1420,9 +1420,9 @@ This guide's security controls prevent real-world data pipeline attacks.
 
 ### Security Tools
 
-- [TruffleHog](https://github.com/trufflesecurity/trufflehog) - Secret scanning
+- [TruffleHog](https://github.com/trufflesecurity/trufflehog)
 - [AWS Encryption SDK](https://docs.aws.amazon.com/encryption-sdk/)
-- [Google Tink](https://github.com/google/tink) - Encryption library
+- [Google Tink](https://github.com/google/tink)
 
 ### Kafka Security
 
