@@ -15,15 +15,9 @@ A cloud-agnostic guide focused on securing production SQL databases (primarily P
    - [High Availability & Multi-AZ](#high-availability--multi-az)
    - [Read Replica Architecture](#read-replica-architecture)
 4. [NoSQL Databases: When to Use and Security Considerations](#4-nosql-databases-when-to-use-and-security-considerations)
-   - [Default to SQL](#default-to-sql)
-   - [When You Actually Need NoSQL](#when-you-actually-need-nosql)
-   - [Critical Security Differences](#critical-security-differences)
-   - [DynamoDB Security (AWS)](#dynamodb-security-aws)
-   - [Firestore Security (GCP)](#firestore-security-gcp)
-   - [MongoDB Atlas Security](#mongodb-atlas-security)
-   - [NoSQL Security Risks](#nosql-security-risks)
-   - [Comparison: SQL vs NoSQL Security](#comparison-sql-vs-nosql-security)
-   - [Recommended Strategy](#recommended-strategy)
+   - [When to Use NoSQL vs SQL](#when-to-use-nosql-vs-sql)
+   - [NoSQL Security Implementation](#nosql-security-implementation)
+   - [Security Comparison and Recommendations](#security-comparison-and-recommendations)
 5. [Network Security](#5-network-security)
    - [Network Isolation](#network-isolation)
    - [Security Groups](#security-groups)
@@ -179,9 +173,9 @@ Primary (writes only)
 
 ## 4. NoSQL Databases: When to Use and Security Considerations
 
-### Default to SQL
+### When to Use NoSQL vs SQL
 
-**Use managed SQL databases (PostgreSQL via RDS, Cloud SQL, Azure Database) for most applications.**
+**Default to SQL for most applications.** Use managed PostgreSQL (RDS, Cloud SQL, Azure Database) unless you have proven requirements for NoSQL.
 
 | Aspect                | SQL (PostgreSQL)                             | NoSQL (DynamoDB, Firestore, MongoDB)        |
 | --------------------- | -------------------------------------------- | ------------------------------------------- |
@@ -191,9 +185,9 @@ Primary (writes only)
 | **Audit Logging**     | Granular (pgaudit)                           | Vendor-specific, often expensive            |
 | **Team Familiarity**  | Universal SQL knowledge                      | Specialized per database                    |
 
-### When You Actually Need NoSQL
+**When You Actually Need NoSQL:**
 
-Choose NoSQL only when you have **proven requirements**:
+Choose NoSQL only when you have **proven, measured requirements**:
 
 - **Extreme write throughput** (>50,000 writes/second) - DynamoDB
 - **Real-time sync with offline support** - Firestore
@@ -208,23 +202,15 @@ Choose NoSQL only when you have **proven requirements**:
 - ❌ "Flexible schema" (PostgreSQL JSONB provides this)
 - ❌ Complex reporting/analytics (SQL with JOINs is far superior)
 
-### Critical Security Differences
+**Key Security Difference:**
 
-**SQL Security Model:**
+SQL databases enforce permissions and validate queries at the database layer. NoSQL databases trust the application to enforce all authorization - the database only validates IAM/security rules but cannot prevent the application from accessing any data those rules allow.
 
-- Database enforces permissions (GRANT/REVOKE on tables)
-- Query validation prevents unauthorized data access
-- Parameterized queries prevent injection
+### NoSQL Security Implementation
 
-**NoSQL Security Model:**
+**DynamoDB (AWS):**
 
-- **Application enforces all authorization** (database trusts application)
-- **No query validation** - application can query entire collections if IAM/rules allow
-- Injection prevention is application's responsibility
-
-### DynamoDB Security (AWS)
-
-**Access Control via IAM:**
+Access control via IAM policies:
 
 ```json
 {
@@ -241,20 +227,16 @@ Choose NoSQL only when you have **proven requirements**:
 
 **Critical:** Without IAM conditions, application can read entire table. Always validate user owns the resource in application code.
 
-**Encryption:**
+Configuration:
 
-- At-rest: KMS encryption (enable on table creation)
+- At-rest encryption: Enable KMS encryption on table creation
 - In-transit: TLS by default
 - Point-in-Time Recovery: Enable for production tables
+- Audit logging: CloudTrail data events (expensive, enable only for sensitive tables)
 
-**Audit Logging:**
+**Firestore (GCP):**
 
-- CloudTrail data events (expensive for high-traffic tables)
-- Enable only for sensitive tables
-
-### Firestore Security (GCP)
-
-**Security Rules (Required for Client Access):**
+Security rules required for client access:
 
 ```javascript
 match /users/{userId} {
@@ -264,63 +246,42 @@ match /users/{userId} {
 
 **Critical:** Default is deny-all. Rules are evaluated server-side but must be carefully tested - complex rules are error-prone.
 
-**Encryption:**
+Configuration:
 
-- At-rest: Google-managed keys (default) or CMEK
+- At-rest encryption: Google-managed keys (default) or CMEK
 - In-transit: TLS by default
+- Audit logging: Cloud Audit Logs for admin and data access, log security rule evaluations
 
-**Audit Logging:**
+**MongoDB Atlas:**
 
-- Cloud Audit Logs for admin and data access
-- Log security rule evaluations and failures
+Access control via database users and roles:
 
-### MongoDB Atlas Security
-
-**Access Control:**
-
-- Database users with SCRAM-SHA-256 authentication
-- Role-based permissions (use custom roles, not default `readWrite`)
+- Use SCRAM-SHA-256 authentication
+- Create custom roles instead of default `readWrite` (too permissive)
 - **IP allowlist required** - never use `0.0.0.0/0`
 
-**NoSQL Injection Prevention:**
+NoSQL injection prevention:
 
 ```javascript
-// Validate input types
+// Validate input types before queries
 if (typeof email !== "string") throw new Error("Invalid input");
 const user = await db.collection("users").findOne({ email: email });
 ```
 
-**Encryption:**
+Configuration:
 
-- At-rest: Enabled by default (cloud provider keys or CMEK)
+- At-rest encryption: Enabled by default (cloud provider keys or CMEK)
 - In-transit: TLS required
-- Field-level: Client-side field-level encryption (CSFLE) for PII/PHI
+- Field-level encryption: Client-side field-level encryption (CSFLE) for PII/PHI
+- Audit logging: Database auditing (M10+ clusters), export to S3/Cloud Logging/Azure Monitor
 
-**Audit Logging:**
+**Common NoSQL Security Risks:**
 
-- Database auditing (M10+ clusters)
-- Export to S3/Cloud Logging/Azure Monitor
+1. **No Query Validation**: Application can query any data if IAM/rules permit - must validate authorization in application code
+2. **Injection via Unsanitized Input**: NoSQL injection possible with object/array inputs - always validate input types
+3. **Overly Permissive Policies**: DynamoDB IAM without `LeadingKeys`, Firestore rules missing `request.auth.uid` checks, MongoDB default `readWrite` role
 
-### NoSQL Security Risks
-
-**1. No Query Validation**
-
-- Application can query any data if IAM/rules permit
-- Must validate authorization in application code
-- Unlike SQL, database doesn't enforce row-level security
-
-**2. Injection via Unsanitized Input**
-
-- NoSQL injection possible with object/array inputs
-- Always validate input types and use explicit operators
-
-**3. Overly Permissive IAM/Rules**
-
-- DynamoDB: IAM policies without `LeadingKeys` condition
-- Firestore: Security rules missing `request.auth.uid` checks
-- MongoDB: Default `readWrite` role grants full database access
-
-### Comparison: SQL vs NoSQL Security
+### Security Comparison and Recommendations
 
 | Security Feature           | SQL                   | DynamoDB            | Firestore           | MongoDB        |
 | -------------------------- | --------------------- | ------------------- | ------------------- | -------------- |
@@ -330,9 +291,7 @@ const user = await db.collection("users").findOne({ email: email });
 | **Field-Level Encryption** | pgcrypto or app-side  | App-side            | App-side            | CSFLE          |
 | **Audit Granularity**      | High (pgaudit)        | Medium (CloudTrail) | Medium (Cloud Logs) | Medium (Atlas) |
 
-### Recommended Strategy
-
-**For 95% of applications:**
+**Recommended Strategy for 95% of Applications:**
 
 1. **Start with PostgreSQL** (RDS, Cloud SQL, Azure Database)
 2. **Add Redis** for caching and session storage
