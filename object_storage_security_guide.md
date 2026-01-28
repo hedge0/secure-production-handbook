@@ -743,6 +743,65 @@ aws cloudwatch put-metric-alarm \
 - Access from unexpected IP addresses/regions
 - Large data downloads (potential exfiltration)
 
+**Data Exfiltration Detection:**
+
+Large data downloads often indicate compromised credentials or insider threats. CloudTrail logs every S3 API call with data transfer size, enabling detection of unusual download patterns.
+
+**Pattern 1: Volume-based anomalies**
+
+Alert when a single IAM principal downloads significantly more data than their baseline:
+
+```python
+# CloudWatch Logs Insights query for unusual download volume
+fields @timestamp, userIdentity.principalId, requestParameters.bucketName,
+       sum(bytesTransferredOut) as totalBytes
+| filter eventName = "GetObject"
+| stats sum(bytesTransferredOut) as totalBytes by userIdentity.principalId
+| sort totalBytes desc
+| filter totalBytes > 10737418240  # Alert on downloads >10GB
+```
+
+Establish baseline download volumes per user/service (e.g., analytics job downloads 5GB daily). Alert when downloads exceed 3-5x baseline within 24 hours, indicating potential data exfiltration or compromised service account.
+
+**Pattern 2: Access pattern anomalies**
+
+```python
+# Alert on unusual access times or locations
+fields @timestamp, userIdentity.principalId, sourceIPAddress,
+       requestParameters.bucketName, requestParameters.key
+| filter eventName = "GetObject"
+| filter (
+    # Downloads outside business hours
+    datefloor(@timestamp, 1h) < 9 OR datefloor(@timestamp, 1h) > 17
+    # OR from unexpected geographic region (add IP geo-lookup)
+)
+```
+
+Normal users access objects during business hours from expected locations. Late-night bulk downloads from new IPs/regions suggest compromised credentials being exploited by attackers.
+
+**Pattern 3: Sequential enumeration**
+
+Attackers often enumerate bucket contents before bulk download:
+
+```python
+# Detect ListBucket followed by many GetObject requests
+fields @timestamp, userIdentity.principalId, eventName
+| filter eventName in ["ListBucket", "ListObjectsV2", "GetObject"]
+| sort @timestamp asc
+# Alert if ListBucket followed by 100+ GetObject within 1 hour
+```
+
+Legitimate users access specific known objects. Attackers list bucket contents (ListBucket), identify sensitive files, then systematically download hundreds of objects.
+
+**Automated Response:**
+
+When exfiltration detected:
+
+1. **Immediate**: Suspend IAM credentials, revoke active sessions (STS)
+2. **Investigate**: Analyze CloudTrail for what was accessed, from where, when
+3. **Contain**: Enable MFA delete on buckets, restrict access to incident response team only
+4. **Notify**: Security team, compliance (GDPR 72-hour breach notification if PII accessed)
+
 ## 8. Attack Scenarios Prevented
 
 This guide's security controls prevent real-world object storage attacks commonly seen in production environments.

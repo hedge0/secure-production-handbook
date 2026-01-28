@@ -251,6 +251,51 @@ async function fetchUserData(): Promise<User> {
 - `sameSite: 'strict'` - Prevents CSRF attacks
 - `maxAge: 15 * 60 * 1000` - Short expiration (15 minutes)
 
+**Common JWT Storage Pitfall: Client-Side Decoding for UI State**
+
+Many developers store JWTs in localStorage specifically to decode them client-side for displaying user info (name, email, role). This creates a false trade-off between security and convenience.
+
+```typescript
+// ❌ INSECURE - storing JWT in localStorage to access claims
+const token = localStorage.getItem("jwt");
+const decoded = JSON.parse(atob(token.split(".")[1])); // Decode JWT payload
+const userName = decoded.name; // Extract user info
+
+// Security issue: JWT accessible to XSS attacks
+// If attacker injects script, they steal token and impersonate user
+```
+
+**The correct pattern:** Backend returns user info separately from auth token.
+
+```typescript
+// ✅ SECURE - token in HttpOnly cookie, user info returned separately
+async function login(email: string, password: string): Promise<User> {
+  const response = await fetch("https://api.example.com/auth/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({ email, password }),
+  });
+
+  // Backend sets HttpOnly cookie AND returns user object
+  const user = await response.json();
+
+  // Store user info in React state, not localStorage
+  // JWT stays in secure HttpOnly cookie
+  return user; // { id, email, name, role }
+}
+
+// Display user info from state/context, not by decoding JWT
+function UserProfile() {
+  const { user } = useAuth(); // From React Context/state
+  return <div>Welcome, {user.name}!</div>; // No JWT decoding needed
+}
+```
+
+Why this matters: Developers often think "I need the JWT claims for my UI, so I must store it in localStorage." But the backend can return user info as a regular JSON response while keeping the JWT in an HttpOnly cookie. Your React app gets all the data it needs for UI without exposing the authentication token to JavaScript.
+
+The authentication flow: (1) User logs in, (2) Backend sets HttpOnly cookie with JWT, (3) Backend also returns user object in response body, (4) React stores user object in state/context for UI, (5) Subsequent API calls automatically include HttpOnly cookie, (6) XSS attacks can't access the JWT.
+
 ### Token Refresh Pattern
 
 Short-lived access tokens (15 minutes) combined with longer-lived refresh tokens (7 days) provide security and convenience. If an access token is stolen, it expires quickly. The refresh token generates new access tokens without re-authentication.
