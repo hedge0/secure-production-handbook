@@ -12,24 +12,6 @@ Battle-tested security guides for production systems. Cloud-agnostic patterns fo
 - **[React Frontend Security Guide](react_frontend_security_guide.md)** - Client-side security, authentication patterns
 - **[SLSA Build Pipeline Guide](slsa_build_pipeline_guide.md)** - Supply chain security, SLSA Level 3 compliance
 
-## Core Principles
-
-- **Defense in Depth** - Multiple security layers
-- **Least Privilege** - Minimum required permissions
-- **Managed Services First** - Reduce operational burden
-- **Encryption Everywhere** - At-rest, in-transit, field-level
-- **Cloud Agnostic** - Works across AWS, GCP, Azure
-
-## Quick Start
-
-**Building an API?** → [API Security Design Guide](api_security_design_guide.md)  
-**Database setup?** → [Database Security Guide](database_security_guide.md)  
-**Running containers?** → [Kubernetes Security Guide](kubernetes_security_guide.md)  
-**CI/CD pipeline?** → [SLSA Build Pipeline Guide](slsa_build_pipeline_guide.md)  
-**File storage?** → [Object Storage Security Guide](object_storage_security_guide.md)  
-**React app?** → [React Frontend Security Guide](react_frontend_security_guide.md)  
-**Streaming data?** → [Data Pipeline Security Guide](data_pipeline_security_guide.md)
-
 ## Key Recommendations
 
 **Start simple.** Most teams should use serverless (Lambda/Cloud Run) + managed databases ($30-100/month) instead of Kubernetes ($500-2000+/month).
