@@ -1,6 +1,6 @@
 # Database Security Guide
 
-**Last Updated:** January 28, 2026
+**Last Updated:** January 29, 2026
 
 A cloud-agnostic guide focused on securing production SQL databases (primarily PostgreSQL) with defense-in-depth security, high availability, and disaster recovery. Includes comparisons to NoSQL alternatives and guidance on when each is appropriate. This guide includes industry best practices and lessons learned from real-world implementations.
 
@@ -260,32 +260,13 @@ Access control via database users and roles:
 - Create custom roles instead of default `readWrite` (too permissive)
 - **IP allowlist required** - never use `0.0.0.0/0`
 
-NoSQL injection prevention - MongoDB queries use JSON objects, making them vulnerable to operator injection:
+NoSQL injection prevention:
 
 ```javascript
-// VULNERABLE - attacker sends password: {"$gt": ""}
-const user = await db.collection("users").findOne({
-  username: req.body.username,
-  password: req.body.password, // ⚠️ Attacker injects operator, bypasses auth
-});
-
-// SAFE - validate input types
-if (
-  typeof req.body.username !== "string" ||
-  typeof req.body.password !== "string"
-) {
-  return res.status(400).json({ error: "Invalid input" });
-}
-
-const user = await db.collection("users").findOne({
-  username: req.body.username,
-  password: req.body.password, // ✓ Now safe from operator injection
-});
+// Validate input types before queries
+if (typeof email !== "string") throw new Error("Invalid input");
+const user = await db.collection("users").findOne({ email: email });
 ```
-
-The vulnerability occurs because MongoDB interprets objects in queries as operators (`$gt`, `$ne`, `$regex`, `$where`). An attacker sending `{"$gt": ""}` as password matches any password greater than empty string, bypassing authentication. Always validate that user input is the expected primitive type (string, number, boolean) before using in queries.
-
-Similar injection risks exist in DynamoDB and Firestore when building query conditions from user input - always validate types and sanitize before constructing queries.
 
 Configuration:
 
@@ -912,6 +893,105 @@ For very high scale, use PgBouncer to multiplex thousands of app connections int
 - 10x faster query response (eliminates connection overhead)
 - Prevents connection exhaustion attacks
 - Reduces database resource consumption
+
+### Query Timeouts for DoS Prevention
+
+Query timeouts prevent resource exhaustion attacks where malicious or poorly optimized queries consume database resources indefinitely. Without timeouts, a single bad query can lock tables, exhaust connections, and cause cascading failures.
+
+**PostgreSQL Configuration:**
+
+```sql
+-- Set at database level (recommended for production)
+ALTER DATABASE mydb SET statement_timeout = '30s';
+
+-- Set at user level (application-specific limits)
+ALTER ROLE api_app_user SET statement_timeout = '5s';
+
+-- Set at session level (per-connection override)
+SET statement_timeout = '10s';
+```
+
+**Application-Level Timeouts:**
+
+```javascript
+const { Pool } = require("pg");
+
+const pool = new Pool({
+  host: process.env.DB_HOST,
+  database: "mydb",
+  max: 20,
+  connectionTimeoutMillis: 2000, // Timeout acquiring connection
+  idleTimeoutMillis: 30000, // Close idle connections
+  query_timeout: 5000, // Timeout individual queries (5s)
+  statement_timeout: 5000, // PostgreSQL statement timeout
+});
+
+// Per-query timeout override
+async function complexQuery() {
+  const client = await pool.connect();
+  try {
+    await client.query("SET statement_timeout = 30000"); // 30s for this query
+    const result = await client.query("SELECT * FROM large_table WHERE ...");
+    return result.rows;
+  } finally {
+    client.release();
+  }
+}
+```
+
+**Timeout Strategy:**
+
+- **Simple queries** (primary key lookups): 1-2 seconds
+- **Standard queries** (indexed searches): 5 seconds
+- **Complex queries** (joins, aggregations): 10-30 seconds
+- **Analytics/reporting**: 60 seconds (run on read replicas)
+
+**Why this prevents DoS:**
+
+Without timeouts, an attacker can craft queries that:
+
+- Full table scan on billions of rows (hours to complete)
+- Cartesian joins creating massive intermediate results (exhaust memory)
+- Recursive CTEs with no termination condition (infinite loops)
+- Lock contention queries blocking all other transactions
+
+**With statement_timeout = 5s:**
+
+- Bad query cancelled after 5 seconds
+- Connection returned to pool
+- Database resources freed
+- Other queries continue normally
+
+**Attack scenario prevented:**
+
+```sql
+-- Malicious query (no timeout: runs for hours, locks table)
+SELECT * FROM users u1
+CROSS JOIN users u2
+CROSS JOIN users u3;  -- Cartesian product: billions of rows
+
+-- With statement_timeout = 5s: query cancelled, no damage
+ERROR:  canceling statement due to statement timeout
+```
+
+**Monitoring query timeouts:**
+
+```sql
+-- PostgreSQL: Track timeout frequency
+SELECT count(*) as timeout_count
+FROM pg_stat_statements
+WHERE query LIKE '%statement timeout%';
+
+-- Alert if timeout rate > 1% of total queries
+```
+
+**Best practices:**
+
+- Set conservative defaults (5s for application users)
+- Override for known slow queries (analytics, batch jobs)
+- Monitor timeout frequency (high rate = optimization needed)
+- Log timed-out queries for investigation
+- Fail fast (5s timeout) rather than hang (no timeout)
 
 ### Read/Write Splitting
 

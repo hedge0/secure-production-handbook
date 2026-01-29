@@ -1,6 +1,6 @@
 # Kubernetes Security Guide
 
-**Last Updated:** January 28, 2026
+**Last Updated:** January 29, 2026
 
 A cloud-agnostic guide for building production-ready Kubernetes clusters with defense-in-depth security, high availability, and disaster recovery. This guide includes industry best practices and lessons learned from real-world production implementations.
 
@@ -24,6 +24,7 @@ A cloud-agnostic guide for building production-ready Kubernetes clusters with de
    - [Istio Service Mesh](#istio-service-mesh)
 6. [Policy Enforcement with Kyverno](#6-policy-enforcement-with-kyverno)
    - [Kyverno Policy Engine](#kyverno-policy-engine)
+   - [Horizontal Pod Autoscaler (HPA)](#horizontal-pod-autoscaler-hpa)
 7. [Continuous Vulnerability & Threat Detection](#7-continuous-vulnerability--threat-detection)
    - [Trivy Operator for Vulnerability Scanning](#trivy-operator-for-vulnerability-scanning)
    - [Falco Runtime Security](#falco-runtime-security)
@@ -495,6 +496,83 @@ spec:
                     memory: "?*"
                     cpu: "?*"
 ```
+
+**Why resource limits are security-critical:**
+
+Without limits, a compromised pod can consume all cluster resources, causing denial of service for legitimate workloads. Cryptominers exploit unlimited CPU to mine at full capacity. Resource limits contain the blast radius - a compromised pod's damage is restricted to its allocated resources.
+
+### Horizontal Pod Autoscaler (HPA)
+
+HPA automatically scales pod replicas based on CPU/memory utilization. It's built into Kubernetes (included in EKS, GKE, AKS by default - no installation required).
+
+**Basic HPA Configuration:**
+
+```bash
+# Simple CPU-based autoscaling
+kubectl autoscale deployment myapp --cpu-percent=70 --min=3 --max=10
+```
+
+```yaml
+# Equivalent YAML configuration
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: myapp
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: myapp
+  minReplicas: 3
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+```
+
+**When to use HPA:**
+
+- ✅ Traffic is unpredictable (global users, viral content, breaking news)
+- ✅ Load varies significantly and randomly throughout the day
+- ✅ You cannot predict when scaling is needed
+
+**When NOT to use HPA (use scheduled scaling instead):**
+
+- ❌ Traffic follows predictable patterns (business hours 9-5, weekday vs weekend)
+- ❌ Small team (<10 engineers) - scheduled scaling is simpler to maintain
+- ❌ Database is the bottleneck - scaling application pods won't help
+
+**Scheduled Scaling for Predictable Traffic:**
+
+If your traffic is predictable (most B2B SaaS, internal tools, business-hour applications), scheduled scaling is simpler and more reliable than HPA:
+
+```bash
+# Scale up before business hours (7:55 AM weekdays)
+55 7 * * 1-5 kubectl scale deployment myapp --replicas=10
+
+# Scale down after hours (6:05 PM weekdays)
+5 18 * * 1-5 kubectl scale deployment myapp --replicas=3
+```
+
+**Cost:** $0, **Complexity:** 2 cron jobs, **Reliability:** No metrics lag, no autoscaler bugs
+
+**Security considerations:**
+
+- HPA prevents manual over-provisioning that wastes budget
+- HPA responds to traffic spikes that could indicate DDoS attacks (scales to handle load)
+- Simple, predictable scaling (scheduled or basic HPA) is more secure than complex reactive systems
+- Avoid custom metrics HPA unless proven necessary - adds complexity and potential failure modes
+
+**Limitations:**
+
+- HPA scales horizontally (more pods), not vertically (bigger pods)
+- Requires resource requests to be set (Kyverno policy above enforces this)
+- Metrics lag: 30-60 seconds between load spike and scaling action
+- For instant scale-up, pre-scale using scheduled scaling or set higher min replicas
 
 ---
 

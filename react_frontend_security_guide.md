@@ -1,6 +1,6 @@
 # React Frontend Security Guide
 
-**Last Updated:** January 28, 2026
+**Last Updated:** January 29, 2026
 
 A practical guide focused on securing production React applications. React's built-in protections handle many common vulnerabilities (XSS), allowing this guide to focus on configuration, authentication patterns, and security pitfalls specific to modern React development.
 
@@ -426,9 +426,82 @@ For Vite/CRA, configure via Nginx or CloudFlare Transform Rules (Settings → Tr
 
 **Development vs Production:** Development environments often require relaxed CSP (`'unsafe-eval'`, `'unsafe-inline'`) for hot module reloading. Use environment detection to apply stricter CSP in production.
 
-**Third-party scripts (Google Analytics, Stripe):** Use nonce-based CSP where server generates unique random value per request and adds to both CSP header and script tags. This is more secure than hash-based CSP for dynamic scripts.
+### Nonce-Based CSP Implementation
 
-**CSP violation reporting:** Add `report-uri https://your-endpoint.com/csp-report` to log violations for attack detection.
+Nonce-based CSP is more secure than `'unsafe-inline'` for applications with third-party scripts. The server generates a unique random value per request and includes it in both the CSP header and script tags.
+
+**Next.js Middleware:**
+
+```typescript
+// middleware.ts
+import { NextRequest, NextResponse } from "next/server";
+import crypto from "crypto";
+
+export function middleware(request: NextRequest) {
+  const nonce = Buffer.from(crypto.randomUUID()).toString("base64");
+
+  const cspHeader = [
+    "default-src 'self'",
+    `script-src 'self' 'nonce-${nonce}' https://cdn.example.com`,
+    "style-src 'self' 'unsafe-inline'",
+    "connect-src 'self' https://api.example.com",
+    "frame-ancestors 'none'",
+  ].join("; ");
+
+  const response = NextResponse.next();
+  response.headers.set("Content-Security-Policy", cspHeader);
+  response.headers.set("x-nonce", nonce);
+  return response;
+}
+```
+
+**Using Nonce in Components:**
+
+```typescript
+export const getServerSideProps = async ({ req }) => {
+  return { props: { nonce: req.headers["x-nonce"] || "" } };
+};
+
+export default function Page({ nonce }) {
+  return (
+    <>
+      {/* Inline script with nonce */}
+      <script
+        nonce={nonce}
+        dangerouslySetInnerHTML={{
+          __html: `console.log('Allowed by CSP');`,
+        }}
+      />
+
+      {/* Third-party script with nonce */}
+      <script nonce={nonce} src="https://analytics.example.com/script.js" />
+    </>
+  );
+}
+```
+
+**Key Points:**
+
+- Generate new nonce per request (never reuse)
+- Use `crypto.randomUUID()` or `crypto.randomBytes(16)`
+- Pass nonce to all components that need inline scripts
+- Add third-party CDN domains to `script-src` or use nonce
+- Use `'unsafe-inline'` in development only (breaks with nonces)
+
+**CSP Violation Reporting:**
+
+```typescript
+// Add to CSP header
+"report-uri https://your-domain.com/api/csp-report";
+
+// Log violations
+app.post("/api/csp-report", (req, res) => {
+  console.log("CSP Violation:", req.body);
+  res.status(204).end();
+});
+```
+
+Test with `Content-Security-Policy-Report-Only` first, then switch to enforcing mode after fixing violations.
 
 ## 6. CSRF Protection
 
