@@ -16,7 +16,7 @@ Security is simple when you follow three principles:
 
 ### 1. Managed Services Are Non-Negotiable
 
-Never self-host what cloud providers will manage for you. Not because you can't — because you shouldn't have to.
+Never self-host what cloud providers will manage for you. Not because you can't, but because you shouldn't have to.
 
 **Use managed:**
 
@@ -70,7 +70,7 @@ Encryption is your last line of defense when all access controls fail.
 2. **In-transit:** TLS 1.2+ for all network traffic (no exceptions)
 3. **Field-level:** Application-layer encryption for PII/PHI/PCI before storing
 
-**Why field-level matters:** Database encryption protects against stolen disks. Field-level encryption protects against stolen databases — even your own DBAs can't read the plaintext without KMS keys.
+**Why field-level matters:** Database encryption protects against stolen disks. Field-level encryption protects against stolen databases. Even your own DBAs can't read the plaintext without KMS keys.
 
 ```python
 # Database admin sees this in the database:
