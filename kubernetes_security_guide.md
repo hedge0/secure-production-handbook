@@ -1,6 +1,6 @@
 # Kubernetes Security Guide
 
-**Last Updated:** January 29, 2026
+**Last Updated:** September 22, 2026
 
 A cloud-agnostic guide for building production-ready Kubernetes clusters with defense-in-depth security, high availability, and disaster recovery. This guide includes industry best practices and lessons learned from real-world production implementations.
 
@@ -21,13 +21,14 @@ A cloud-agnostic guide for building production-ready Kubernetes clusters with de
 5. [Ingress & Traffic Management](#5-ingress--traffic-management)
    - [Load Balancer Architecture](#load-balancer-architecture)
    - [WAF Configuration](#waf-configuration)
+   - [Ingress Controllers & Gateway API](#ingress-controllers--gateway-api)
    - [Istio Service Mesh](#istio-service-mesh)
+   - [Horizontal Pod Autoscaler (HPA)](#horizontal-pod-autoscaler-hpa)
 6. [Policy Enforcement with Kyverno](#6-policy-enforcement-with-kyverno)
    - [Kyverno Policy Engine](#kyverno-policy-engine)
-   - [Horizontal Pod Autoscaler (HPA)](#horizontal-pod-autoscaler-hpa)
 7. [Continuous Vulnerability & Threat Detection](#7-continuous-vulnerability--threat-detection)
    - [Trivy Operator for Vulnerability Scanning](#trivy-operator-for-vulnerability-scanning)
-   - [Falco Runtime Security](#falco-runtime-security)
+   - [Falco Runtime Security (Optional)](#falco-runtime-security-optional)
 8. [Secrets Management](#8-secrets-management)
    - [External Secrets Management](#external-secrets-management)
    - [AWS EKS Integration](#aws-eks-integration)
@@ -42,9 +43,9 @@ A cloud-agnostic guide for building production-ready Kubernetes clusters with de
     - [Prometheus & Grafana](#prometheus--grafana)
     - [Log Retention & Compliance](#log-retention--compliance)
 11. [Identity & Access Management](#11-identity--access-management)
-    - [Kubernetes RBAC (Role-Based Access Control)](#kubernetes-rbac)
+    - [Kubernetes RBAC](#kubernetes-rbac)
     - [Workload Identity & Cloud IAM Integration](#workload-identity--cloud-iam-integration)
-    - [Cloud IAM Policy Best Practices](#iam-policy-best-practices)
+    - [IAM Policy Best Practices](#iam-policy-best-practices)
 12. [Disaster Recovery](#12-disaster-recovery)
     - [Recovery Strategy](#recovery-strategy)
     - [Recovery Procedure](#recovery-procedure)
@@ -73,8 +74,9 @@ This guide outlines a production-grade Kubernetes architecture that prioritizes 
 **Real-World Breaches:**
 
 - **Tesla (2018)**: Exposed Kubernetes dashboard led to cryptomining, AWS credentials stolen
-- **LA Times (2019)**: Misconfigured Kubernetes cluster exposed internal systems
-- **Shopify (2020)**: RBAC misconfiguration allowed unauthorized access
+- **Weight Watchers (2018)**: A Kubernetes admin console with no password exposed root AWS keys, 31 IAM users and dozens of S3 buckets
+- **Dero and Monero cryptojacking (2023)**: Competing campaigns scanned for Kubernetes API servers exposed to the internet with anonymous auth enabled and deployed miners cluster-wide
+- **IngressNightmare (2025)**: CVE-2025-1974 in ingress-nginx's admission webhook gave unauthenticated RCE and access to every Secret in the cluster; Wiz estimated 40%+ of cloud environments were exposed
 - **Multiple Organizations**: Shodan regularly finds thousands of publicly exposed Kubernetes dashboards
 
 **Core Principles:**
@@ -102,7 +104,7 @@ This guide outlines a production-grade Kubernetes architecture that prioritizes 
 - Expertise in: networking, security, storage, observability, GitOps
 - Operational complexity: YAML files, Helm charts, kubectl, service meshes, policy engines
 - Debugging: pod evictions, OOMKilled errors, image pull failures, DNS issues, network policies
-- Cost: $500-2000+/month for minimal production setup, easily $2000-10000+/month with full observability/security stack
+- Cost: $400-660/month for a minimal production setup, $780-1410/month with the full observability/security stack, $1500-3000+/month once real traffic arrives (see breakdown below)
 
 **What to use instead:**
 
@@ -129,7 +131,7 @@ This guide outlines a production-grade Kubernetes architecture that prioritizes 
 
 - **AWS**: ECS Fargate + ALB + RDS
 - **GCP**: Cloud Run (supports WebSockets) + Cloud SQL
-- **Azure**: Container Instances + Azure SQL
+- **Azure**: Container Apps + Azure SQL
 
 **Why Fargate over Kubernetes:**
 
@@ -137,7 +139,7 @@ This guide outlines a production-grade Kubernetes architecture that prioritizes 
 - No Kubernetes complexity (YAML, Helm, kubectl, service mesh)
 - Still get containers, load balancing, auto-scaling
 - 1/10th the operational complexity of K8s
-- $100-500/month vs $500-2000+/month for K8s
+- $130-315/month vs $400-1400+/month for K8s (see breakdown below)
 
 **You ACTUALLY need Kubernetes when:**
 
@@ -172,7 +174,7 @@ This guide outlines a production-grade Kubernetes architecture that prioritizes 
 
 **Kubernetes Minimal Production:**
 
-- EKS/GKE/AKS Control Plane: $73
+- Control plane: $73 (EKS/GKE at $0.10/hr; EKS jumps to $0.60/hr on extended support, so upgrade on time; AKS Free tier is $0 but has no SLA)
 - Worker Nodes (3 t3.medium instances): $150-200
 - NAT Gateway (3 AZ): $100-135
 - Load Balancer: $25-40
@@ -200,9 +202,9 @@ This guide outlines a production-grade Kubernetes architecture that prioritizes 
 
 **Infrastructure as Code:**
 
-- [Terraform](https://www.terraform.io/) - Infrastructure provisioning and management
+- [Terraform](https://developer.hashicorp.com/terraform) - Infrastructure provisioning and management
 - [Helm](https://helm.sh/) - Kubernetes package manager
-- [ArgoCD](https://argo-cd.readthedocs.io/) - GitOps continuous delivery for Kubernetes
+- [ArgoCD](https://argo-cd.readthedocs.io/en/stable/) - GitOps continuous delivery for Kubernetes
 
 **Security & Policy:**
 
@@ -318,7 +320,7 @@ Applications running in Kubernetes retrieve database credentials from cloud secr
 | **GCP GKE**    | Workload Identity + Secret Manager                    |
 | **Azure AKS**  | Azure Key Vault Provider for Secrets Store CSI Driver |
 
-Credentials are synced from the external vault into Kubernetes secrets, then injected into pods as environment variables. This keeps credentials centralized in the cloud provider's secrets manager (not in Kubernetes native Secrets).
+The CSI driver mounts credentials into the pod as files on a tmpfs volume. Use its optional `secretObjects` sync to a Kubernetes Secret only when an environment variable is unavoidable, and prefer files (Section 8). Either way the source of truth stays in the cloud provider's secrets manager.
 
 ## 4. Cluster Architecture & Separation
 
@@ -330,7 +332,7 @@ Isolate production workloads from administrative tooling using separate Kubernet
 
 - Customer-facing applications and services
 - Istio for mTLS, Kyverno for policy enforcement
-- Falco for runtime monitoring, Trivy Operator for vulnerability scanning
+- Trivy Operator for vulnerability scanning, Falco for runtime monitoring (optional - see Section 7)
 - Exposed via customer-facing ALB with WAF
 
 **Admin Cluster**:
@@ -362,7 +364,7 @@ Use Kubernetes namespaces with strict NetworkPolicies if cost is primary constra
 
 ### Network Policy Implementation
 
-Without NetworkPolicies, namespace isolation is convention only. Apply these two policies to enforce separation:
+Without NetworkPolicies, namespace isolation is convention only. Apply these policies to enforce separation:
 
 **Default deny all ingress (apply to each namespace):**
 
@@ -394,13 +396,54 @@ spec:
     - from:
         - namespaceSelector:
             matchLabels:
-              name: istio-system
+              kubernetes.io/metadata.name: istio-system # namespace your ingress gateway runs in (Helm installs use istio-ingress)
       ports:
         - protocol: TCP
           port: 8080
 ```
 
-Apply default-deny first, then explicitly allow required traffic. Test with: `kubectl exec -it pod-name -- curl http://service.namespace.svc.cluster.local`
+**Default deny all egress (apply to each namespace, then allow each dependency explicitly):**
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-egress
+  namespace: production
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    # DNS (adjust if you run NodeLocal DNSCache or GKE Cloud DNS)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Istio sidecars need istiod for config and certificates
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: istio-system
+          podSelector:
+            matchLabels:
+              app: istiod
+      ports:
+        - protocol: TCP
+          port: 15012
+```
+
+Add explicit egress rules for the database subnet (`ipBlock`) and any external APIs the service calls.
+
+Apply default-deny first, then explicitly allow required traffic. Test with an ephemeral debug container (distroless app images have no `curl`; it shares the pod's network namespace, so the pod's NetworkPolicy applies; `--profile=restricted` sets `runAsNonRoot`, so the image needs a numeric `USER`): `kubectl debug -it pod-name --image=cgr.dev/chainguard/curl --profile=restricted -- curl -sS http://service.namespace.svc.cluster.local`
 
 ## 5. Ingress & Traffic Management
 
@@ -427,16 +470,33 @@ Configure load balancers, WAF, and service mesh to secure and route traffic to a
 Deploy Web Application Firewall at load balancer to filter malicious traffic:
 
 - Protect against OWASP Top 10 (SQL injection, XSS, etc.)
-- Rate limiting for DDoS mitigation
+- Rate-based rules for application-layer (L7) floods
 - Block known malicious IPs and bot traffic
+- Volumetric (L3/L4) DDoS is handled by the provider edge, not WAF rules: AWS Shield Standard (automatic on ALB/CloudFront; Shield Advanced for L7 and cost protection), Cloud Armor, Azure DDoS Protection
+
+### Ingress Controllers & Gateway API
+
+Ingress NGINX - critical infrastructure for about half of cloud native environments - was retired in March 2026: no releases, bug fixes, or security patches after that date (IngressNightmare, CVE-2025-1974, showed what an unpatched ingress controller costs). Do not deploy it. This guide's ALB → Istio ingress gateway path already avoids it; for new routing config use [Gateway API](https://gateway-api.sigs.k8s.io/), the Kubernetes-standard successor to Ingress that Istio implements natively, and run `ingress2gateway` to convert any leftover Ingress resources.
 
 ### Istio Service Mesh
 
 **Mutual TLS (mTLS)**:
 
-- Automatic mTLS encryption between all pods
-- Prevents man-in-the-middle attacks on internal traffic
-- Zero configuration required after Istio installation
+- Automatic mTLS between sidecar-injected pods (label namespaces `istio-injection=enabled`; ambient mode uses ztunnel instead of sidecars)
+- Default mode is `PERMISSIVE` (plaintext still accepted), so enforce it mesh-wide:
+
+```yaml
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata:
+  name: default
+  namespace: istio-system
+spec:
+  mtls:
+    mode: STRICT
+```
+
+- Prevents man-in-the-middle attacks on internal traffic once STRICT is enforced
 - Automatic certificate rotation
 
 **Traffic Management**:
@@ -452,64 +512,15 @@ Deploy Web Application Firewall at load balancer to filter malicious traffic:
 - Service-to-service metrics (latency, error rates)
 - Visualize traffic flow with Kiali dashboard
 
-## 6. Policy Enforcement with Kyverno
-
-Enforce security policies at deployment time to prevent misconfigurations and ensure compliance.
-
-### Kyverno Policy Engine
-
-Deploy [Kyverno](https://github.com/kyverno/kyverno) for Kubernetes-native policy enforcement without learning a new language.
-
-**Essential Security Policies:**
-
-Kyverno enforces these policies at pod deployment to prevent security misconfigurations:
-
-1. **Require Resource Limits** - Prevents resource exhaustion by requiring CPU/memory limits
-2. **Block Privileged Containers** - Prevents privilege escalation attacks
-3. **Require Non-Root User** - Ensures containers run as non-root user
-4. **Verify Image Signatures** - Validates images are signed with Cosign
-
----
-
-**Example Policy: Require Resource Limits**
-
-```yaml
-apiVersion: kyverno.io/v1
-kind: ClusterPolicy
-metadata:
-  name: require-resource-limits
-spec:
-  validationFailureAction: enforce
-  rules:
-    - name: check-resources
-      match:
-        resources:
-          kinds:
-            - Pod
-      validate:
-        message: "CPU and memory limits required"
-        pattern:
-          spec:
-            containers:
-              - resources:
-                  limits:
-                    memory: "?*"
-                    cpu: "?*"
-```
-
-**Why resource limits are security-critical:**
-
-Without limits, a compromised pod can consume all cluster resources, causing denial of service for legitimate workloads. Cryptominers exploit unlimited CPU to mine at full capacity. Resource limits contain the blast radius - a compromised pod's damage is restricted to its allocated resources.
-
 ### Horizontal Pod Autoscaler (HPA)
 
-HPA automatically scales pod replicas based on CPU/memory utilization. It's built into Kubernetes (included in EKS, GKE, AKS by default - no installation required).
+HPA automatically scales pod replicas based on CPU/memory utilization. The controller is built into Kubernetes, but it reads CPU/memory from Metrics Server: GKE and AKS ship it, EKS does not. On EKS install the `metrics-server` community add-on first (`aws eks create-addon --cluster-name production-cluster --addon-name metrics-server`) or the HPA below reports `<unknown>` and never scales.
 
 **Basic HPA Configuration:**
 
 ```bash
 # Simple CPU-based autoscaling
-kubectl autoscale deployment myapp --cpu-percent=70 --min=3 --max=10
+kubectl autoscale deployment myapp --cpu=70% --min=3 --max=10
 ```
 
 ```yaml
@@ -550,54 +561,113 @@ spec:
 
 If your traffic is predictable (most B2B SaaS, internal tools, business-hour applications), scheduled scaling is simpler and more reliable than HPA:
 
-```bash
-# Scale up before business hours (7:55 AM weekdays)
+```text
+# crontab entries: scale up before business hours (7:55 AM weekdays)
 55 7 * * 1-5 kubectl scale deployment myapp --replicas=10
 
 # Scale down after hours (6:05 PM weekdays)
 5 18 * * 1-5 kubectl scale deployment myapp --replicas=3
 ```
 
+Run these from a Kubernetes CronJob whose ServiceAccount can only scale this Deployment, not from a bastion with admin credentials. If ArgoCD manages the Deployment, drop `replicas` from the Git manifest (or add `/spec/replicas` to `ignoreDifferences`), or the next sync resets it.
+
 **Cost:** $0, **Complexity:** 2 cron jobs, **Reliability:** No metrics lag, no autoscaler bugs
 
 **Security considerations:**
 
 - HPA prevents manual over-provisioning that wastes budget
-- HPA responds to traffic spikes that could indicate DDoS attacks (scales to handle load)
+- HPA is not a DDoS control: scaling into a flood turns an availability attack into a bill. Cap `maxReplicas`, alert on scale-out bursts, and absorb floods at the edge (Shield/WAF rate rules, Cloud Armor, Azure DDoS Protection) before they reach pods
 - Simple, predictable scaling (scheduled or basic HPA) is more secure than complex reactive systems
 - Avoid custom metrics HPA unless proven necessary - adds complexity and potential failure modes
 
 **Limitations:**
 
 - HPA scales horizontally (more pods), not vertically (bigger pods)
-- Requires resource requests to be set (Kyverno policy above enforces this)
+- Requires resource requests to be set (when only limits are set, requests default to the limits the Kyverno policy in Section 6 enforces)
 - Metrics lag: 30-60 seconds between load spike and scaling action
 - For instant scale-up, pre-scale using scheduled scaling or set higher min replicas
+
+## 6. Policy Enforcement with Kyverno
+
+Enforce security policies at deployment time to prevent misconfigurations and ensure compliance.
+
+### Kyverno Policy Engine
+
+Deploy [Kyverno](https://github.com/kyverno/kyverno) for Kubernetes-native policy enforcement: policies are YAML with CEL expressions, the same language as the built-in ValidatingAdmissionPolicy, so there is no Rego to learn.
+
+Turn on the built-in baseline first: label each workload namespace `pod-security.kubernetes.io/enforce=restricted` (Pod Security Admission, GA since Kubernetes 1.25). It rejects privileged containers, host namespaces, root users and missing `seccompProfile` with no extra components. Kyverno then adds what PSA cannot express: image signatures, registry allowlists, resource limits and custom rules.
+
+**Essential Security Policies:**
+
+Kyverno enforces these policies at pod deployment to prevent security misconfigurations:
+
+1. **Require Resource Limits** - Prevents resource exhaustion by requiring CPU/memory limits
+2. **Block Privileged Containers** - Prevents privilege escalation attacks
+3. **Require Non-Root User** - Ensures containers run as non-root user
+4. **Verify Image Signatures** - Validates images are signed with Cosign
+
+**Policy syntax:** The examples use Kyverno's CEL-based types in `policies.kyverno.io/v1` (`ValidatingPolicy` for pod rules, `ImageValidatingPolicy` for signatures), current as of Kyverno v1.19.1. The legacy `kyverno.io/v1` `ClusterPolicy` was deprecated in Kyverno 1.17 and its removal is planned for v1.20 (targeted October 2026), so migrate existing policies now.
+
+---
+
+**Example Policy: Require Resource Limits**
+
+```yaml
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
+metadata:
+  name: require-resource-limits
+spec:
+  validationActions: [Deny]
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["pods"]
+  variables:
+    - name: allContainers
+      expression: >-
+        object.spec.containers + object.spec.?initContainers.orValue([])
+  validations:
+    - expression: >-
+        variables.allContainers.all(c, has(c.resources) && has(c.resources.limits) &&
+        has(c.resources.limits.cpu) && has(c.resources.limits.memory))
+      message: "CPU and memory limits required"
+```
+
+**Why resource limits are security-critical:**
+
+Without limits, a compromised pod can consume all cluster resources, causing denial of service for legitimate workloads. Cryptominers exploit unlimited CPU to mine at full capacity. Resource limits contain the blast radius - a compromised pod's damage is restricted to its allocated resources.
 
 ---
 
 **Example Policy: Block Privileged Containers**
 
 ```yaml
-apiVersion: kyverno.io/v1
-kind: ClusterPolicy
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
 metadata:
   name: disallow-privileged
 spec:
-  validationFailureAction: enforce
-  rules:
-    - name: check-privileged
-      match:
-        resources:
-          kinds:
-            - Pod
-      validate:
-        message: "Privileged mode is not allowed"
-        pattern:
-          spec:
-            containers:
-              - securityContext:
-                  privileged: false
+  validationActions: [Deny]
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["pods"]
+  variables:
+    - name: allContainers
+      expression: >-
+        object.spec.containers +
+        object.spec.?initContainers.orValue([]) +
+        object.spec.?ephemeralContainers.orValue([])
+  validations:
+    - expression: >-
+        variables.allContainers.all(c,
+        c.?securityContext.?privileged.orValue(false) == false)
+      message: "Privileged mode is not allowed"
 ```
 
 ---
@@ -605,24 +675,31 @@ spec:
 **Example Policy: Require Non-Root Containers**
 
 ```yaml
-apiVersion: kyverno.io/v1
-kind: ClusterPolicy
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
 metadata:
   name: require-non-root
 spec:
-  validationFailureAction: enforce
-  rules:
-    - name: check-runAsNonRoot
-      match:
-        resources:
-          kinds:
-            - Pod
-      validate:
-        message: "Containers must run as non-root user"
-        pattern:
-          spec:
-            securityContext:
-              runAsNonRoot: true
+  validationActions: [Deny]
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["pods"]
+  variables:
+    - name: ctnrs
+      expression: >-
+        object.spec.containers +
+        object.spec.?initContainers.orValue([]) +
+        object.spec.?ephemeralContainers.orValue([])
+  validations:
+    # Pod-level true with no container overriding it, or every container sets true
+    - expression: >-
+        (object.spec.?securityContext.?runAsNonRoot.orValue(false) == true &&
+        variables.ctnrs.all(c, c.?securityContext.?runAsNonRoot.orValue(true) == true)) ||
+        variables.ctnrs.all(c, c.?securityContext.?runAsNonRoot.orValue(false) == true)
+      message: "Containers must run as non-root user"
 ```
 
 ---
@@ -632,29 +709,35 @@ spec:
 Requires [Cosign](https://github.com/sigstore/cosign) for signing container images.
 
 ```yaml
-apiVersion: kyverno.io/v1
-kind: ClusterPolicy
+apiVersion: policies.kyverno.io/v1
+kind: ImageValidatingPolicy
 metadata:
   name: verify-image-signature
 spec:
-  validationFailureAction: enforce
-  rules:
-    - name: check-signature
-      match:
-        resources:
-          kinds:
-            - Pod
-      verifyImages:
-        - imageReferences:
-            - "*"
-          attestors:
-            - count: 1
-              entries:
-                - keys:
-                    publicKeys: |-
-                      -----BEGIN PUBLIC KEY-----
-                      ...your public key...
-                      -----END PUBLIC KEY-----
+  validationActions: [Deny]
+  webhookConfiguration:
+    timeoutSeconds: 15 # signature lookups hit the registry
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["pods"]
+  # Your own images only: the Istio sidecar and third-party operators are not signed with your key
+  matchImageReferences:
+    - glob: "registry.example.com/myorg/*"
+  attestors:
+    - name: cosign
+      cosign:
+        key:
+          data: |
+            -----BEGIN PUBLIC KEY-----
+            ...your public key...
+            -----END PUBLIC KEY-----
+  validations:
+    - expression: >-
+        images.containers.map(image, verifyImageSignatures(image, [attestors.cosign])).all(e, e > 0)
+      message: "Image signature verification failed"
 ```
 
 ---
@@ -729,8 +812,7 @@ Deploy [Trivy Operator](https://github.com/aquasecurity/trivy-operator) for cont
 - Unexpected process execution in containers
 - Sensitive file access (/etc/shadow, SSH keys, credentials)
 - File system modifications in read-only paths
-- Unexpected network connections
-- Network connections to unexpected destinations
+- Unexpected network connections (unknown destinations, C2 beacons)
 - Privilege escalation attempts
 - Container processes accessing host filesystem
 - Suspicious system calls
@@ -747,9 +829,9 @@ When you have all of these in place, an attacker who compromises a container has
 - **Non-root enforcement**: Attacker cannot write to most filesystem locations or escalate privileges
 - **Read-only root filesystem**: Even if attacker finds writable location, filesystem is immutable
 - **Restrictive NetworkPolicies**: Default-deny egress blocks data exfiltration and C2 communications
-- **Istio mTLS**: Service-to-service communication locked down, preventing lateral movement
+- **Istio STRICT mTLS + AuthorizationPolicy**: every workload has a cryptographic identity and only allow-listed callers are accepted; mTLS alone still lets any mesh workload call any service
 
-**Result**: Falco would detect activities that your preventive controls already make impossible. An attacker literally has no shell to spawn, no tools to download, nowhere to write files, and no network path to exfiltrate data.
+**Result**: these controls remove most of what Falco's default rules fire on, but they do not make runtime attacks impossible. An in-process payload (deserialization, SSTI or a Log4Shell-class bug in a Java/Python/Node app) runs with the application's own permissions and needs no shell, `readOnlyRootFilesystem` does not cover `emptyDir` or `/tmp` mounts, and anything your egress policy allows (the database, cloud APIs, DNS) is still a path out.
 
 **2. Attack Surface Expansion**
 
@@ -823,7 +905,7 @@ Store secrets in external vault services and inject them into Kubernetes pods se
 
 **Never store secrets in**:
 
-- Kubernetes Secrets (base64 encoded, not encrypted at rest by default)
+- Kubernetes Secrets as the system of record (base64, readable by anyone with `get secrets` RBAC; EKS, GKE and AKS encrypt etcd at rest by default, but that protects the disk, not the API)
 - ConfigMaps
 - Environment variables in Dockerfiles
 - Git repositories
@@ -836,14 +918,14 @@ Store secrets in external vault services and inject them into Kubernetes pods se
 
 ### AWS EKS Integration
 
-- Secrets Store CSI Driver with AWS Secrets Manager provider
-- IAM Roles for Service Accounts (IRSA) for authentication
+- Secrets Store CSI Driver with the AWS Secrets and Configuration Provider (ASCP); set `usePodIdentity: "true"` in the SecretProviderClass
+- EKS Pod Identity for authentication (AWS's recommended method); IRSA only where Pod Identity is unsupported (Fargate, Windows nodes, EKS Anywhere, ROSA, self-managed clusters)
 - Secrets mounted as volumes (not environment variables for sensitive data)
 
 ### GCP GKE Integration
 
-- Workload Identity for pod authentication to Secret Manager
-- GCP Secret Manager CSI Driver
+- Workload Identity Federation for GKE for pod authentication to Secret Manager
+- Secret Manager add-on for GKE (`gcloud container clusters update ... --enable-secret-manager`; Google-managed Secrets Store CSI Driver + provider)
 - Secrets mounted as volumes
 
 ### Azure AKS Integration
@@ -854,19 +936,14 @@ Store secrets in external vault services and inject them into Kubernetes pods se
 
 ### Secret Rotation
 
-**Modern best practices** (NIST, CNCF): Routine rotation no longer recommended - focus on preventing exposure.
+**Rotation policy**: Prefer short-lived workload identity so there is nothing static to rotate: EKS Pod Identity (IRSA where Pod Identity is unsupported), Workload Identity Federation for GKE, Microsoft Entra Workload ID, and IAM database authentication. The SDK refreshes these credentials automatically (about an hour for IRSA, GKE and AKS; up to 6 hours for EKS Pod Identity). NIST SP 800-63B-4's rule against forced periodic changes covers user passwords only, never service credentials.
 
-**Rotate only when**:
+**Static secrets that must exist** (database passwords, third-party API keys):
 
-- Secrets confirmed or suspected compromised
-- Employee with access leaves organization
-- Compliance requirements mandate rotation
-
-**Better security approach**:
-
-- Use short-lived credentials (IAM roles, workload identity)
-- Implement proper access controls and audit logging
-- Monitor for unauthorized access attempts
+- Rotate immediately on suspected or confirmed compromise, or when someone with access leaves
+- Otherwise rotate on a documented risk-based schedule (90 days is a common choice): AWS Secrets Manager rotates on a schedule via Lambda, GCP Secret Manager rotation schedules notify Pub/Sub
+- PCI DSS v4.0.1 Req 8.6.3 requires passwords for application and system accounts to be changed "periodically (at the frequency defined in the entity's targeted risk analysis) and upon suspicion or confirmation of compromise"
+- Keep access controls, audit logging and alerts on unauthorized access attempts
 
 ## 9. Infrastructure as Code & GitOps
 
@@ -914,7 +991,7 @@ Use Terraform to provision and manage all cloud infrastructure as code.
 
 Organize into reusable modules to reduce duplication:
 
-```
+```text
 modules/
 ├── vpc/          # VPC, subnets, NAT gateways
 ├── eks-cluster/  # EKS cluster, node groups, IRSA
@@ -939,12 +1016,18 @@ Infrastructure drift occurs when manual changes bypass Terraform:
 
 ```bash
 # Detect drift
-terraform plan -detailed-exitcode  # Exit code 2 = drift detected
+terraform plan -detailed-exitcode  # 0 = no changes, 1 = error, 2 = drift or unapplied changes
+```
 
-# Automated daily drift detection in CI/CD
+```yaml
+# Automated daily drift detection in CI/CD (GitHub Actions steps)
 - name: Drift Detection
+  id: drift
   run: terraform plan -no-color -detailed-exitcode
-  continue-on-error: true  # Alert but don't fail
+  continue-on-error: true # keep the job green...
+- name: Alert on drift
+  if: steps.drift.outcome == 'failure' # ...but alert (conclusion is always success)
+  run: ./scripts/notify-drift.sh # Slack/PagerDuty webhook
 ```
 
 **Remediation**: Import manual changes (`terraform import`), revert with `terraform apply`, or update Terraform to match reality.
@@ -966,14 +1049,18 @@ terraform plan -detailed-exitcode  # Exit code 2 = drift detected
 Use Infracost to preview cost impact before applying:
 
 ```yaml
+# Infracost 0.10 CLI; Infracost 2.x (github.com/infracost/cli) replaces these with `infracost scan`
 - name: Run Infracost
-  run: infracost breakdown --path . --format json
+  run: |
+    infracost breakdown --path . --format json --out-file infracost-base.json # on the base branch
+    infracost diff --path . --compare-to infracost-base.json # on the PR branch
+
 # Example output: Monthly cost change: +$653 (m5.xlarge + db.r5.2xlarge)
 ```
 
 **Testing:**
 
-- **Pre-apply**: `terraform validate`, `tfsec` (security scan), `checkov` (policy-as-code)
+- **Pre-apply**: `terraform validate`, `trivy config .` (security scan; tfsec was folded into Trivy and is maintenance-only), `checkov` (policy-as-code)
 - **Preview environments**: Create temporary workspace to test major changes
 - **Integration tests**: Terratest for module validation
 
@@ -985,7 +1072,7 @@ terraform {
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "~> 5.0"  # Allow 5.x, block 6.0 breaking changes
+      version = "~> 6.0"  # Allow 6.x, block 7.0 breaking changes (6.0 shipped June 2025)
     }
   }
 }
@@ -1096,7 +1183,7 @@ Deploy in admin cluster for metrics collection and visualization.
 
 - Visualize Prometheus metrics
 - Alert on threshold violations (high CPU, pod crashes, error rate spikes)
-- Track security metrics (Kyverno violations, Falco alerts, Trivy vulnerabilities)
+- Track security metrics (Kyverno violations, Falco alerts if deployed, Trivy vulnerabilities)
 - Accessible only via admin ALB (VPN/bastion restricted)
 
 ### Log Retention & Compliance
@@ -1114,12 +1201,13 @@ Deploy in admin cluster for metrics collection and visualization.
 
 **Retention Requirements by Compliance Standard:**
 
-| Compliance Standard | Retention Period | Scope                                              |
-| ------------------- | ---------------- | -------------------------------------------------- |
-| **SOC2**            | 1-7 years        | Audit logs, access logs, security events           |
-| **ISO 27001**       | 1-3 years        | Security logs, incident records                    |
-| **HIPAA**           | 6 years          | PHI access logs, audit trails                      |
-| **GDPR**            | 1-3 years        | Personal data access logs (with right to deletion) |
+| Compliance Standard | Retention Period                                   | Scope                                                                      |
+| ------------------- | -------------------------------------------------- | -------------------------------------------------------------------------- |
+| **PCI DSS v4.0.1**  | 12 months (3 months immediately available)         | Audit logs for in-scope systems (Req 10.5.1)                               |
+| **HIPAA**           | 6 years                                            | Security Rule documentation, incl. audit records (45 CFR 164.316(b)(2)(i)) |
+| **SOC 2**           | Not prescribed; set and document your own          | Audit logs, access logs, security events                                   |
+| **ISO 27001**       | Not prescribed; set and document your own          | Security logs, incident records                                            |
+| **GDPR**            | No fixed period; storage limitation (Art. 5(1)(e)) | Personal data kept no longer than necessary                                |
 
 **Archive Process**:
 
@@ -1149,6 +1237,8 @@ kind: ServiceAccount
 metadata:
   name: api-server-sa
   namespace: production
+# No token by default; a pod that needs this Role opts in with
+# spec.automountServiceAccountToken: true (the pod setting wins)
 automountServiceAccountToken: false
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -1271,17 +1361,44 @@ Allow pods to assume cloud IAM roles without storing credentials. This eliminate
 
 **Key Differences by Cloud Provider:**
 
-| Feature                 | AWS EKS (IRSA)               | GCP GKE (Workload Identity)      | Azure AKS (Workload Identity)       |
-| ----------------------- | ---------------------------- | -------------------------------- | ----------------------------------- |
-| **Setup Complexity**    | Medium (OIDC provider)       | Medium (Workload pool)           | Medium (Federated credential)       |
-| **Auth Method**         | OIDC federation              | Workload Identity binding        | Managed identity federation         |
-| **Credential Lifetime** | 15 min (auto-refresh)        | 60 min (auto-refresh)            | Variable (auto-refresh)             |
-| **Annotation Required** | `eks.amazonaws.com/role-arn` | `iam.gke.io/gcp-service-account` | `azure.workload.identity/client-id` |
-| **IAM Role Type**       | IAM Role with trust policy   | GCP Service Account              | Azure Managed Identity              |
+| Feature                 | AWS EKS (Pod Identity; IRSA legacy)                          | GCP GKE (Workload Identity Federation)                           | Azure AKS (Microsoft Entra Workload ID)                                               |
+| ----------------------- | ------------------------------------------------------------ | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| **Setup Complexity**    | Low (one association per SA; IRSA: OIDC provider + trust)    | Low (one IAM binding on the KSA principal)                       | Medium (OIDC issuer + federated credential)                                           |
+| **Auth Method**         | EKS Auth service + node agent (IRSA: OIDC federation to STS) | Workload identity pool federation                                | Managed identity federation                                                           |
+| **Credential Lifetime** | Up to 6 h Pod Identity, 1 h IRSA STS session (auto-refresh)  | 1 h access token (auto-refresh)                                  | Variable (auto-refresh)                                                               |
+| **Annotation Required** | None (IRSA: `eks.amazonaws.com/role-arn`)                    | None (impersonation only: `iam.gke.io/gcp-service-account`)      | `azure.workload.identity/client-id` + pod label `azure.workload.identity/use: "true"` |
+| **IAM Role Type**       | IAM Role trusting `pods.eks.amazonaws.com`                   | IAM binding on `principal://...svc.id.goog/subject/ns/NS/sa/KSA` | Azure Managed Identity                                                                |
 
 ---
 
-**AWS EKS - IRSA (IAM Roles for Service Accounts):**
+**AWS EKS - Pod Identity (recommended):**
+
+AWS now recommends EKS Pod Identity (launched November 2023) over IRSA. No OIDC provider, no ServiceAccount annotation: install the `eks-pod-identity-agent` add-on once per cluster (built into EKS Auto Mode), give the IAM role a trust policy for `pods.eks.amazonaws.com`, and create an association. One trust policy works in every cluster, and the node agent fetches credentials from the EKS Auth API so pods never call STS themselves. IRSA remains the fallback for Fargate, Windows nodes, and non-EKS clusters.
+
+```bash
+# Step 1: Install the agent add-on (once per cluster; not needed on EKS Auto Mode)
+aws eks create-addon --cluster-name production-cluster --addon-name eks-pod-identity-agent
+
+# Step 2: Create IAM role whose trust policy allows sts:AssumeRole + sts:TagSession
+#         for Principal { "Service": "pods.eks.amazonaws.com" }
+
+# Step 3: Map the role to the ServiceAccount (no annotation required)
+aws eks create-pod-identity-association \
+  --cluster-name production-cluster \
+  --namespace production \
+  --service-account api-server-sa \
+  --role-arn arn:aws:iam::ACCOUNT_ID:role/api-server-role
+```
+
+**Key Points:**
+
+- Associations are managed through the EKS API, so granting a role needs `eks:CreatePodIdentityAssociation`, not write access to a ServiceAccount
+- Session tags (`eks-cluster-name`, `kubernetes-namespace`, `kubernetes-service-account`) let one role scope access with ABAC conditions such as `aws:PrincipalTag/kubernetes-namespace`
+- Not supported on Fargate or Windows nodes - use IRSA there
+
+---
+
+**AWS EKS - IRSA (legacy; still needed for Fargate, Windows nodes and non-EKS clusters):**
 
 Enable pods to assume IAM roles using OIDC federation.
 
@@ -1306,60 +1423,62 @@ kubectl annotate serviceaccount api-server-sa \
 
 ---
 
-**GCP GKE - Workload Identity:**
+**GCP GKE - Workload Identity Federation for GKE:**
 
-Bind Kubernetes ServiceAccounts to GCP Service Accounts for seamless authentication.
+Grant IAM roles directly to the Kubernetes ServiceAccount principal. A Google service account plus the `iam.gke.io/gcp-service-account` annotation is now the fallback (impersonation) for the few APIs that reject federated principals.
 
 ```bash
-# Step 1: Enable Workload Identity on cluster
+# Step 1: Enable Workload Identity Federation on the cluster (Autopilot: already on)
 gcloud container clusters update production-cluster \
+  --location=REGION \
   --workload-pool=PROJECT_ID.svc.id.goog
 
-# Step 2: Create GCP service account
-gcloud iam service-accounts create api-server-sa
+# Step 2: Move existing node pools to the GKE metadata server (only new pools get it automatically)
+gcloud container node-pools update NODEPOOL_NAME \
+  --cluster=production-cluster \
+  --location=REGION \
+  --workload-metadata=GKE_METADATA
 
-# Step 3: Grant IAM permissions to GCP service account
-gcloud projects add-iam-policy-binding PROJECT_ID \
-  --member="serviceAccount:api-server-sa@PROJECT_ID.iam.gserviceaccount.com" \
-  --role="roles/secretmanager.secretAccessor"
-
-# Step 4: Bind Kubernetes SA to GCP SA
-gcloud iam service-accounts add-iam-policy-binding \
-  api-server-sa@PROJECT_ID.iam.gserviceaccount.com \
-  --role=roles/iam.workloadIdentityUser \
-  --member="serviceAccount:PROJECT_ID.svc.id.goog[production/api-server-sa]"
-
-# Step 5: Annotate Kubernetes ServiceAccount
-kubectl annotate serviceaccount api-server-sa \
-  -n production \
-  iam.gke.io/gcp-service-account=api-server-sa@PROJECT_ID.iam.gserviceaccount.com
+# Step 3: Grant the Kubernetes ServiceAccount access to one secret (no Google service account needed)
+gcloud secrets add-iam-policy-binding SECRET_NAME \
+  --role="roles/secretmanager.secretAccessor" \
+  --member="principal://iam.googleapis.com/projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/PROJECT_ID.svc.id.goog/subject/ns/production/sa/api-server-sa"
 ```
 
 **Key Points:**
 
-- Workload pool establishes trust between GKE and GCP IAM
-- Binding creates 1:1 relationship between K8s SA and GCP SA
-- Credentials automatically injected into pod environment
+- Workload pool establishes trust between GKE and Google Cloud IAM
+- No Google service account, key or annotation: the Kubernetes SA is the IAM principal
+- Pods get short-lived tokens from the GKE metadata server, never a key in the pod environment
 
 ---
 
-**Azure AKS - Workload Identity:**
+**Azure AKS - Microsoft Entra Workload ID:**
 
 Use managed identities with federated credentials for pod authentication.
 
 ```bash
-# Step 1: Enable Workload Identity on cluster
+# Step 1: Enable the OIDC issuer and Workload Identity on the cluster
 az aks update \
   --resource-group production-rg \
   --name production-cluster \
+  --enable-oidc-issuer \
   --enable-workload-identity
+
+OIDC_ISSUER_URL=$(az aks show --resource-group production-rg --name production-cluster \
+  --query "oidcIssuerProfile.issuerUrl" --output tsv)
 
 # Step 2: Create Azure managed identity
 az identity create --name api-server-identity --resource-group production-rg
+CLIENT_ID=$(az identity show --name api-server-identity --resource-group production-rg \
+  --query clientId --output tsv)
+PRINCIPAL_ID=$(az identity show --name api-server-identity --resource-group production-rg \
+  --query principalId --output tsv)
 
-# Step 3: Grant permissions to managed identity
+# Step 3: Grant permissions to managed identity (vault must use Azure RBAC authorization)
 az role assignment create \
-  --assignee CLIENT_ID \
+  --assignee-object-id "$PRINCIPAL_ID" \
+  --assignee-principal-type ServicePrincipal \
   --role "Key Vault Secrets User" \
   --scope /subscriptions/SUB_ID/resourceGroups/production-rg/providers/Microsoft.KeyVault/vaults/prod-keyvault
 
@@ -1368,18 +1487,24 @@ az identity federated-credential create \
   --name api-server-federated \
   --identity-name api-server-identity \
   --resource-group production-rg \
-  --issuer OIDC_ISSUER_URL \
-  --subject system:serviceaccount:production:api-server-sa
+  --issuer "$OIDC_ISSUER_URL" \
+  --subject system:serviceaccount:production:api-server-sa \
+  --audience api://AzureADTokenExchange
 
 # Step 5: Annotate Kubernetes ServiceAccount
 kubectl annotate serviceaccount api-server-sa \
   -n production \
-  azure.workload.identity/client-id=CLIENT_ID
+  azure.workload.identity/client-id="$CLIENT_ID"
+
+# Step 6: Label the pod template (the webhook only injects tokens into labelled pods)
+kubectl patch deployment api-server -n production --type merge \
+  -p '{"spec":{"template":{"metadata":{"labels":{"azure.workload.identity/use":"true"}}}}}'
 ```
 
 **Key Points:**
 
 - Federated credential links managed identity to K8s ServiceAccount
+- Pods must carry the label `azure.workload.identity/use: "true"` or the webhook never injects the token (the SA annotation alone does nothing)
 - Azure automatically handles token exchange and renewal
 - Works with Azure AD-integrated resources (Key Vault, Storage, etc.)
 
@@ -1400,7 +1525,10 @@ kubectl annotate serviceaccount api-server-sa \
   "Statement": [
     {
       "Effect": "Allow",
-      "Action": "secretsmanager:GetSecretValue",
+      "Action": [
+        "secretsmanager:GetSecretValue",
+        "secretsmanager:DescribeSecret"
+      ],
       "Resource": "arn:aws:secretsmanager:region:account:secret:prod/api/*"
     }
   ]
@@ -1415,9 +1543,9 @@ kubectl auth can-i get secrets \
   --as=system:serviceaccount:production:api-server-sa -n production
 
 # Audit IAM usage
-# AWS: CloudTrail logs for AssumeRoleWithWebIdentity
-# GCP: Cloud Audit Logs for service account usage
-# Azure: Activity logs for managed identity auth
+# AWS: CloudTrail AssumeRoleWithWebIdentity (IRSA) or AssumeRoleForPodIdentity (Pod Identity)
+# GCP: Cloud Audit Logs; enable Data Access logs for Secret Manager (off by default)
+# Azure: Entra ID managed identity sign-in logs (Activity Log shows control-plane changes only)
 ```
 
 ## 12. Disaster Recovery
@@ -1501,16 +1629,22 @@ Respond to security incidents in Kubernetes with structured processes for contai
 
 **Emergency Network Isolation**:
 
-Apply default-deny NetworkPolicy to prevent lateral movement:
+Relabel the compromised pod so its Service, ReplicaSet and existing allow policies stop selecting it (the Deployment starts a clean replacement; the pod stays for forensics), then deny all traffic to the quarantine label. NetworkPolicies are additive, so a deny-all policy cannot override allow rules that still select the pod (namespace-wide `podSelector: {}` allows, such as Section 4's DNS and istiod egress, still apply), and `podSelector: {}` would take the whole namespace offline:
+
+```bash
+kubectl label pod pod-name -n production app- quarantine=true
+```
 
 ```yaml
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: emergency-lockdown
-  namespace: compromised-namespace
+  namespace: production
 spec:
-  podSelector: {}
+  podSelector:
+    matchLabels:
+      quarantine: "true"
   policyTypes:
     - Ingress
     - Egress
@@ -1552,7 +1686,7 @@ This guide's security controls prevent real-world Kubernetes attacks commonly se
 **Malicious Runtime Behavior**
 
 - Attack: Unexpected processes spawning (crypto miners, reverse shells, data exfiltration tools)
-- Mitigated by: Hardened images with package managers removed (no apt/yum/apk), non-root user enforcement, restrictive NetworkPolicies blocking egress, Istio mTLS preventing lateral movement, Prometheus anomaly detection, runtime monitoring (Falco if deployed)
+- Mitigated by: Hardened images with package managers removed (no apt/yum/apk), non-root user enforcement, restrictive NetworkPolicies blocking egress, Istio STRICT mTLS plus AuthorizationPolicy allow-lists, Prometheus anomaly detection, runtime monitoring (Falco if deployed)
 
 **Resource Exhaustion / DoS**
 
@@ -1562,7 +1696,7 @@ This guide's security controls prevent real-world Kubernetes attacks commonly se
 **Lateral Movement via Network Access**
 
 - Attack: Compromised pod used as pivot to attack other pods/services
-- Mitigated by: Default-deny NetworkPolicies, Istio mTLS between pods, namespace isolation with explicit allow rules, micro-segmentation
+- Mitigated by: Default-deny NetworkPolicies, Istio STRICT mTLS with `AuthorizationPolicy` allow-lists (mTLS alone does not restrict who may call whom), namespace isolation with explicit allow rules, micro-segmentation
 
 **Database Compromise via Pod Access**
 
@@ -1587,7 +1721,7 @@ This guide's security controls prevent real-world Kubernetes attacks commonly se
 **Secrets Exposure in Pod Configs**
 
 - Attack: Secrets leaked through environment variables, ConfigMaps, or insecure Kubernetes Secrets
-- Mitigated by: External secrets management (AWS/GCP/Azure vaults), Secrets Store CSI Driver, secrets never in Git/native Secrets, Workload Identity/IRSA
+- Mitigated by: External secrets management (AWS/GCP/Azure vaults), Secrets Store CSI Driver, secrets never in Git/native Secrets, Workload Identity/EKS Pod Identity (IRSA)
 
 **Compromised ArgoCD / GitOps Repo**
 
@@ -1598,9 +1732,9 @@ This guide's security controls prevent real-world Kubernetes attacks commonly se
 
 ### Infrastructure & Orchestration
 
-- [Terraform](https://www.terraform.io/)
+- [Terraform](https://developer.hashicorp.com/terraform)
 - [Helm](https://helm.sh/)
-- [ArgoCD](https://argo-cd.readthedocs.io/)
+- [ArgoCD](https://argo-cd.readthedocs.io/en/stable/)
 
 ### Security & Policy
 
@@ -1619,12 +1753,29 @@ This guide's security controls prevent real-world Kubernetes attacks commonly se
 ### Managed Kubernetes Services
 
 - [AWS EKS](https://aws.amazon.com/eks/)
+- [EKS Pod Identity](https://docs.aws.amazon.com/eks/latest/userguide/pod-identities.html)
 - [GCP GKE](https://cloud.google.com/kubernetes-engine)
-- [Azure AKS](https://azure.microsoft.com/en-us/services/kubernetes-service/)
+- [Azure AKS](https://azure.microsoft.com/en-us/products/kubernetes-service/)
 
 ### Standards & Documentation
 
 - [OWASP Kubernetes Security Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Kubernetes_Security_Cheat_Sheet.html)
 - [CIS Kubernetes Benchmark](https://www.cisecurity.org/benchmark/kubernetes)
-- [NIST Application Container Security Guide](https://csrc.nist.gov/publications/detail/sp/800-190/final)
+- [NIST Application Container Security Guide](https://csrc.nist.gov/pubs/sp/800/190/final)
 - [Kubernetes Security Best Practices](https://kubernetes.io/docs/concepts/security/)
+- [Pod Security Admission](https://kubernetes.io/docs/concepts/security/pod-security-admission/)
+- [Pod Security Standards](https://kubernetes.io/docs/concepts/security/pod-security-standards/)
+- [Kyverno: Migrating to CEL Policies](https://kyverno.io/docs/guides/migration-to-cel/)
+- [Ingress NGINX Retirement (Kubernetes blog, Nov 2025)](https://kubernetes.io/blog/2025/11/11/ingress-nginx-retirement/)
+- [Ingress NGINX Statement (Kubernetes blog, Jan 2026)](https://kubernetes.io/blog/2026/01/29/ingress-nginx-statement/)
+- [Gateway API](https://gateway-api.sigs.k8s.io/)
+- [NIST SP 800-63B-4 Authentication and Authenticator Management](https://pages.nist.gov/800-63-4/sp800-63b.html)
+- [PCI DSS v4.0.1 (Req 8.6.3, 10.5.1)](https://docs-prv.pcisecuritystandards.org/PCI%20DSS/Standard/PCI-DSS-v4_0_1.pdf)
+- [HIPAA 45 CFR 164.316 (Documentation Retention)](https://www.law.cornell.edu/cfr/text/45/164.316)
+- [GDPR (Regulation (EU) 2016/679)](https://eur-lex.europa.eu/eli/reg/2016/679/oj)
+
+### Incident Reports
+
+- [Weight Watchers Kubernetes Exposure (BleepingComputer, 2018)](https://www.bleepingcomputer.com/news/security/weight-watchers-it-infrastructure-exposed-via-no-password-kubernetes-server/)
+- [First Dero Cryptojacking Campaign Targeting Kubernetes (CrowdStrike, 2023)](https://www.crowdstrike.com/en-us/blog/crowdstrike-discovers-first-ever-dero-cryptojacking-campaign-targeting-kubernetes/)
+- [IngressNightmare: CVE-2025-1974 in Ingress NGINX (Wiz, 2025)](https://www.wiz.io/blog/ingress-nginx-kubernetes-vulnerabilities)

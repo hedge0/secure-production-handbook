@@ -1,6 +1,6 @@
 # API Security Design Guide
 
-**Last Updated:** January 28, 2026
+**Last Updated:** September 22, 2026
 
 A cloud-agnostic guide for building production-ready APIs with a practical blend of security and performance. This guide includes industry best practices and lessons learned from real-world implementations across serverless and traditional architectures.
 
@@ -31,6 +31,7 @@ A cloud-agnostic guide for building production-ready APIs with a practical blend
    - [CORS Configuration](#cors-configuration)
    - [Authentication & Authorization](#authentication--authorization)
    - [JWT Validation Checklist](#jwt-validation-checklist)
+   - [Object-Level Authorization (BOLA)](#object-level-authorization-bola)
    - [Modern Authentication Patterns](#modern-authentication-patterns)
 7. [Data Security & Input Validation](#7-data-security--input-validation)
    - [Data Encryption at Rest](#data-encryption-at-rest)
@@ -63,13 +64,14 @@ A cloud-agnostic guide for building production-ready APIs with a practical blend
     - [Batching Requests](#batching-requests)
     - [Concurrency Patterns](#concurrency-patterns)
     - [Caching Strategies](#caching-strategies)
-    - [Serverless Cold Start Mitigation](#serverless-cold-start-mitigation-1)
+    - [Database Performance Considerations](#database-performance-considerations)
+    - [Cold Start Optimization](#cold-start-optimization)
 13. [API Versioning](#13-api-versioning)
     - [Versioning Approaches](#versioning-approaches)
     - [When to Increment Versions](#when-to-increment-versions)
     - [Deprecation Strategy](#deprecation-strategy)
 14. [Identity & Access Management](#14-identity--access-management)
-    - [Cloud IAM Policies for API Infrastructure](#cloud-iam-policies)
+    - [Cloud IAM Policies](#cloud-iam-policies)
     - [Service Account Management](#service-account-management)
     - [Secrets Retrieval Patterns](#secrets-retrieval-patterns)
     - [Monitoring and Auditing](#monitoring-and-auditing)
@@ -95,10 +97,10 @@ This guide outlines a production-grade API design approach that balances securit
 
 **Real-World Breaches:**
 
-- **Optus (2022)**: API vulnerability exposed 10M+ customer records, including passports and driver's licenses
-- **T-Mobile (2021)**: API flaw exposed 54M+ customer data through unauthorized access
+- **Optus (2022)**: An unauthenticated internet-facing API, whose access control had been broken by a coding error since 2018, let an attacker enumerate up to 9.8M customer records, including passport and driver's licence numbers
+- **T-Mobile (2023)**: A single API, abused from about November 25, 2022 until it was detected in January 2023, exposed 37M postpaid and prepaid customer accounts
 - **Peloton (2021)**: Unauthenticated API leaked private user data and location information
-- **LinkedIn (2021)**: API scraping vulnerability exposed data of 700M users
+- **LinkedIn (2021)**: Unthrottled API access let scrapers assemble profile data on 700M users; no private data was exposed, but the complete dataset was sold on hacker forums
 
 **Core Principles:**
 
@@ -128,7 +130,7 @@ This guide outlines a production-grade API design approach that balances securit
 
 - [Dependabot](https://github.com/dependabot/dependabot-core) - Automated dependency updates
 - [TruffleHog](https://github.com/trufflesecurity/trufflehog) - Secret scanning
-- [Semgrep](https://semgrep.dev/) or [Opengrep](https://github.com/opengrep/opengrep) - Static application security testing (SAST)
+- [Semgrep](https://semgrep.dev/), [Opengrep](https://github.com/opengrep/opengrep) or [Aikido Security](https://www.aikido.dev/) - Static application security testing (SAST)
 
 ### External Services
 
@@ -145,7 +147,7 @@ Cloud-agnostic service options for secrets management, logging, storage, and edg
 **Notes:**
 
 - **Secrets Management**: Required for storing API keys, database credentials, and sensitive configuration
-- **Cold Storage**: Required for multi-year log retention to meet compliance standards (SOC2, HIPAA, GDPR)
+- **Cold Storage**: Needed for long log retention (PCI DSS: 12 months; HIPAA documentation: 6 years); GDPR sets no minimum and limits retention to what is necessary
 - **Edge Protection**: Cloudflare works across all cloud providers and offers free tier with basic WAF + DDoS protection
 - **Rate Limiting State**: Redis is recommended for fastest performance and works with any cloud provider
 
@@ -155,7 +157,7 @@ Cloud-agnostic service options for secrets management, logging, storage, and edg
 
 Choose the deployment model that matches your application's latency, traffic patterns, and operational requirements.
 
-| Aspect                   | Serverless (Lambda, Cloud Functions, Azure Functions)        | Containers/VMs (ECS, GKE, AKS, EC2)                    |
+| Aspect                   | Serverless (Lambda, Cloud Run functions, Azure Functions)    | Containers/VMs (ECS, GKE, AKS, EC2)                    |
 | ------------------------ | ------------------------------------------------------------ | ------------------------------------------------------ |
 | **Management**           | Fully managed - no provisioning, patching, or scaling config | Manual provisioning, patching, monitoring, scaling     |
 | **Security**             | Ephemeral environments reduce attack surface                 | Requires ongoing security maintenance                  |
@@ -243,21 +245,25 @@ Client Request
 **Centralized Authentication Example (Kong):**
 
 ```yaml
-# Kong configuration - applies to all routes
+# Kong declarative config (kong.yml) - top-level plugins are global (all routes)
+_format_version: "3.0"
 plugins:
   - name: jwt
     config:
       key_claim_name: kid
       secret_is_base64: false
+      # jwt plugin verifies only exp/nbf; validate iss and aud
+      # in the service (or with an OpenID Connect plugin)
       claims_to_verify:
         - exp
-        - iss
-        - aud
+        - nbf
   - name: rate-limiting
     config:
       minute: 100
       policy: redis
-      redis_host: redis.internal
+      redis:
+        host: redis.internal
+        port: 6379
 ```
 
 **Benefits of Gateway Architecture:**
@@ -293,12 +299,12 @@ For production systems with multiple services, deploy an API Gateway between you
 
 - Pre-warm instances (eliminates cold starts, higher cost)
 - AWS Lambda Provisioned Concurrency
-- GCP Cloud Functions minimum instances
+- GCP Cloud Run functions (formerly Cloud Functions) minimum instances
 
 **Scheduled Invocations**:
 
 - Ping functions every 5-10 minutes to keep warm
-- AWS CloudWatch Events, GCP Cloud Scheduler, Azure Timer Triggers
+- AWS EventBridge Scheduler, GCP Cloud Scheduler, Azure Timer Triggers
 - Invoke lightweight health check endpoint
 
 ### Language Selection for Serverless
@@ -352,13 +358,13 @@ Prevent hardcoded secrets (API keys, passwords, tokens) from being committed.
 **TruffleHog**:
 
 - Scans Git history for high-entropy strings and known secret patterns
-- Detects 700+ secret types (AWS keys, GCP service accounts, API tokens)
+- Detects 800+ secret types (AWS keys, GCP service accounts, API tokens)
 - Run as pre-commit hook or in CI/CD pipeline
-- Command: `trufflehog git file://. --only-verified`
+- Command: `trufflehog git file://. --results=verified,unknown` (`--results=verified` replaces the hidden legacy flag `--only-verified`; `unknown` keeps hits whose verification call failed)
 
 **GitHub Secret Scanning**:
 
-- Built-in to GitHub (free for public repos, paid for private)
+- Built-in to GitHub: free for public repos (alerts + push protection); private repos need the GitHub Secret Protection add-on ($19/active committer/month, Team and Enterprise Cloud plans since April 2025)
 - Automatically scans commits for known secret patterns
 - Partners with cloud providers (AWS, GCP, Azure) to revoke leaked credentials
 
@@ -366,19 +372,21 @@ Use [pre-commit](https://pre-commit.com/) framework to run TruffleHog before com
 
 ### Static Application Security Testing (SAST)
 
-**Semgrep vs Opengrep:**
+**Semgrep vs Opengrep vs Aikido:**
 
-- **[Semgrep](https://semgrep.dev/)** (Paid): AI-powered analysis reduces false positives significantly, better accuracy, managed rules
-- **[Opengrep](https://github.com/opengrep/opengrep)** (Free, open-source fork): Community-driven rules, more false positives but free
+- **[Semgrep Community Edition](https://github.com/semgrep/semgrep)** (Free, LGPL-2.1): Open-source engine, single-file analysis, more false positives
+- **[Semgrep AppSec Platform](https://semgrep.dev/pricing)** (Free for up to 10 contributors and 10 repos, then Teams from $30/contributor/month): Cross-file dataflow with Pro rules, AI-assisted detection, triage and remediation
+- **[Opengrep](https://github.com/opengrep/opengrep)** (Free, LGPL-2.1): Fork of Semgrep CE launched January 2025 by Aikido Security with Endor Labs, Orca and other vendors; runs Semgrep rules unchanged, no hosted registry and no AI; install from the install script or a release binary (not pip)
+- **[Aikido Security](https://www.aikido.dev/)** (Free Developer plan: 2 users, 10 repos; paid from $300/month): One platform for SAST (its own engine plus Opengrep, with AI false-positive reduction), dependency scanning (SCA), secrets, IaC, container and cloud scanning. The free plan blocks PRs only on dependency findings; blocking on SAST or IaC findings needs a paid plan
 
-**Recommendation:** Use Semgrep if budget allows (fewer false positives = less noise). Use Opengrep for cost-conscious teams willing to triage false positives.
+**Recommendation:** Start with Opengrep (free) or Aikido's free tier (SAST plus dependency, secret and IaC scanning in one place). Pay for Semgrep or Aikido when triage noise costs more than the licence.
 
-**Both tools:**
+**All of them:**
 
 - Scan source code for security vulnerabilities
 - Detect: SQL injection, XSS, insecure crypto, authentication issues, hardcoded secrets
 - Support 30+ languages (JavaScript, Python, Go, Java, C#, etc.)
-- Run in CI/CD on every PR: `semgrep scan --config auto` or `opengrep scan --config auto`
+- Run in CI/CD on every PR: `semgrep scan --config auto` (pulls rules from Semgrep's registry at run time) or `opengrep scan -f ./rules .` against a pinned checkout of [opengrep-rules](https://github.com/opengrep/opengrep-rules) (`--config auto` and `p/...` packs are Semgrep registry features). Aikido gates PRs through its GitHub/GitLab app instead of a CI step
 
 **Common SAST Rules:**
 
@@ -443,12 +451,13 @@ Configure firewall rules to allow traffic ONLY from edge provider IP ranges:
 - Attackers can discover origin IPs via DNS history, SSL certificates, etc.
 - Cloudflare IPs: https://www.cloudflare.com/ips/
 - Cloud-native: Use security groups/firewall rules to allow only load balancer traffic
+- IP allowlisting alone isn't enough: any Cloudflare or CloudFront customer can reach your origin through the same IPs. Also authenticate the edge (Cloudflare Authenticated Origin Pulls with your own certificate or Cloudflare Tunnel; a secret origin header or VPC origins on CloudFront)
 
 ### Basic Rate Limiting at Edge
 
 Implement aggressive catch-all rate limiting for DDoS mitigation:
 
-- Cloudflare: 100 requests/second per IP (free tier: 1 rule)
+- Cloudflare: 1,000 requests per 10 seconds per IP (Free plan: 1 rule, 10-second window only)
 - AWS WAF: 2,000 requests per 5 minutes per IP
 - GCP Cloud Armor: 1,000 requests/minute per IP
 - Azure WAF: 100 requests/minute per IP
@@ -473,34 +482,34 @@ Store all sensitive credentials in external secrets manager - never hardcode or 
 Configure Cross-Origin Resource Sharing for frontend API calls - never use wildcard (`*`):
 
 - Specify exact allowed origins only
-- Allow production domain and localhost for development
-- Example allowed origins: `https://example.com`, `http://localhost:3000`
+- Load the allowlist per environment: production gets production origins only; add `http://localhost:3000` in development only
+- Example production allowlist: `https://example.com`
 
 **TypeScript/Node.js example:**
 
 ```javascript
-const allowedOrigins = ["https://example.com", "http://localhost:3000"];
-cors({
-  origin: (origin, callback) => {
-    allowedOrigins.includes(origin)
-      ? callback(null, true)
-      : callback(new Error("Not allowed by CORS"));
-  },
-});
+const allowedOrigins =
+  process.env.NODE_ENV === "production"
+    ? ["https://example.com"]
+    : ["https://example.com", "http://localhost:3000"];
+// Pass the array: cors sets Access-Control-Allow-Origin only for listed origins
+// and omits it otherwise. Never reject requests with no Origin header (same-origin
+// GETs, curl, mobile apps, health checks) - CORS is a browser policy, not auth.
+app.use(cors({ origin: allowedOrigins }));
 ```
 
 ### Authentication & Authorization
 
 Choose the authentication method that matches your API's security requirements and integration needs.
 
-| Method                      | Use Case                          | Pros                                                    | Cons                                             | Implementation Complexity |
-| --------------------------- | --------------------------------- | ------------------------------------------------------- | ------------------------------------------------ | ------------------------- |
-| **JWT (RS256)**             | User authentication, session mgmt | Stateless, self-contained, widely supported             | Revocation difficult, token size, key management | Medium                    |
-| **API Keys**                | Service-to-service, public APIs   | Simple, fast validation, easy rotation                  | No user context, long-lived, theft risk          | Low                       |
-| **OAuth 2.0 + OIDC**        | Third-party integrations, SSO     | Industry standard, delegated auth, user consent         | Complex flow, token refresh, requires IdP        | High                      |
-| **mTLS (Mutual TLS)**       | Service mesh, internal services   | Strong cryptographic auth, no token theft               | Certificate management, client setup complexity  | High                      |
-| **HMAC Signatures**         | Webhooks, API request signing     | Request integrity, replay protection, no shared secrets | Clock sync required, complex implementation      | Medium                    |
-| **Basic Auth (deprecated)** | Legacy systems only               | Simple                                                  | Credentials in every request, no expiration      | Low (avoid)               |
+| Method                      | Use Case                          | Pros                                                   | Cons                                             | Implementation Complexity |
+| --------------------------- | --------------------------------- | ------------------------------------------------------ | ------------------------------------------------ | ------------------------- |
+| **JWT (RS256)**             | User authentication, session mgmt | Stateless, self-contained, widely supported            | Revocation difficult, token size, key management | Medium                    |
+| **API Keys**                | Service-to-service, public APIs   | Simple, fast validation, easy rotation                 | No user context, long-lived, theft risk          | Low                       |
+| **OAuth 2.0 + OIDC**        | Third-party integrations, SSO     | Industry standard, delegated auth, user consent        | Complex flow, token refresh, requires IdP        | High                      |
+| **mTLS (Mutual TLS)**       | Service mesh, internal services   | Strong cryptographic auth, no token theft              | Certificate management, client setup complexity  | High                      |
+| **HMAC Signatures**         | Webhooks, API request signing     | Request integrity, replay protection (timestamp/nonce) | Shared secret on both sides, clock sync required | Medium                    |
+| **Basic Auth (deprecated)** | Legacy systems only               | Simple                                                 | Credentials in every request, no expiration      | Low (avoid)               |
 
 **OAuth/JWT Token Validation**:
 
@@ -549,6 +558,30 @@ function validateToken(token) {
 
 **Test your validation:** Try using an expired token, wrong audience, or tampered signature - all should be rejected.
 
+### Object-Level Authorization (BOLA)
+
+Authentication answers "who are you"; it says nothing about which records you may touch. Broken Object Level Authorization has been #1 on the OWASP API Security Top 10 since 2019: the client sends `GET /orders/1234`, the API checks the token and returns the order without checking that the caller owns it. Change the ID, read someone else's data.
+
+**Rules:**
+
+- Every handler that takes an ID from the client scopes the query to the caller (`WHERE id = ? AND owner_id = ?`) or checks ownership before acting - no exceptions for "internal" endpoints
+- Return 403 (or 404 when even the object's existence is sensitive) - pick one and be consistent
+- Use random IDs (UUIDv4/ULID) so IDs cannot be enumerated - defense in depth, not the control
+- Write one test per endpoint that requests another user's object with a valid token and expects rejection
+
+```python
+# FastAPI - the ownership check lives in the query, not as an afterthought
+@app.get("/orders/{order_id}")
+async def get_order(order_id: UUID, user=Depends(current_user)):
+    order = await db.fetch_one(
+        "SELECT * FROM orders WHERE id = :id AND owner_id = :uid",
+        {"id": order_id, "uid": user.id},
+    )
+    if not order:
+        raise HTTPException(status_code=404)
+    return order
+```
+
 ### Modern Authentication Patterns
 
 Implement secure authentication flows beyond basic JWT validation for production-grade systems.
@@ -558,11 +591,11 @@ Implement secure authentication flows beyond basic JWT validation for production
 **OAuth 2.1 / OIDC Flow** (recommended for APIs):
 
 ```
-1. Client redirects to auth server (e.g., Auth0, AWS Cognito)
+1. Client creates a PKCE code_verifier, redirects to auth server (e.g., Auth0, AWS Cognito) with its S256 code_challenge
 2. User authenticates → Auth server issues authorization code
-3. Client exchanges code for tokens:
+3. Client exchanges code + code_verifier for tokens:
    - Access token (short-lived, 15 min): API access
-   - Refresh token (long-lived, 7-30 days): Get new access tokens
+   - Refresh token (long-lived, capped at the absolute session timeout, e.g. 7 days): Get new access tokens
    - ID token (OIDC): User identity claims
 4. Client calls API with access token in Authorization header
 5. When access token expires, use refresh token to get new access token
@@ -572,23 +605,28 @@ Implement secure authentication flows beyond basic JWT validation for production
 
 **Refresh Token Rotation:**
 
-Prevents token theft by issuing new refresh tokens on each use (one-time use tokens).
+Limits the damage of a stolen refresh token: each token works once, and reuse of a spent token signals theft (RFC 9700 §4.14.2).
 
 ```javascript
 // Token refresh endpoint
 app.post("/auth/refresh", async (req, res) => {
   const { refresh_token } = req.body;
 
-  // Validate refresh token
-  const session = await validateRefreshToken(refresh_token);
-  if (!session) return res.status(401).json({ error: "Invalid token" });
+  // Consume atomically (e.g. UPDATE ... SET used = true WHERE token = $1
+  // AND used = false RETURNING ...) so concurrent requests can't both redeem it
+  const session = await consumeRefreshToken(refresh_token);
+  if (!session) {
+    // Unknown or already-used token: treat reuse as theft
+    await revokeTokenFamily(refresh_token);
+    return res.status(401).json({ error: "Invalid token" });
+  }
 
-  // Issue new access + refresh tokens
+  // Issue new access + refresh tokens (same token family)
   const newAccessToken = generateAccessToken(session.userId);
-  const newRefreshToken = generateRefreshToken(session.userId);
-
-  // Invalidate old refresh token (one-time use)
-  await revokeRefreshToken(refresh_token);
+  const newRefreshToken = generateRefreshToken(
+    session.userId,
+    session.familyId,
+  );
 
   res.json({
     access_token: newAccessToken,
@@ -602,7 +640,7 @@ app.post("/auth/refresh", async (req, res) => {
 
 | Aspect                  | Implementation                                     | Security Benefit             |
 | ----------------------- | -------------------------------------------------- | ---------------------------- |
-| **Token storage**       | httpOnly cookies (not localStorage)                | Prevents XSS attacks         |
+| **Token storage**       | httpOnly + Secure + SameSite cookies, CSRF defense | XSS can't read/steal tokens  |
 | **Session tracking**    | Redis with user ID, device info, IP, last activity | Enables anomaly detection    |
 | **Concurrent sessions** | Limit 3-5 active sessions, revoke oldest           | Prevents credential sharing  |
 | **Session timeout**     | Absolute (7 days) + idle (30 min)                  | Reduces exposure window      |
@@ -617,7 +655,8 @@ Require second factor after password validation for high-security scenarios.
 ```javascript
 // After password validation, require MFA
 if (user.mfa_enabled) {
-  // Send TOTP code via authenticator app or SMS
+  // Ask for the TOTP code from the user's authenticator app (generated on-device,
+  // not sent). SMS OTP is a weaker, NIST-restricted fallback.
   const mfaToken = generateMFAToken(user.id);
 
   return res.json({
@@ -630,7 +669,16 @@ if (user.mfa_enabled) {
 app.post("/auth/verify-mfa", async (req, res) => {
   const { mfa_token, code } = req.body;
 
+  // mfa_token: short-lived (≤5 min), single-use
   const userId = await validateMFAToken(mfa_token);
+  if (!userId) return res.status(401).json({ error: "Invalid code" });
+
+  // Cap guesses: a 6-digit code falls to brute force without a limit
+  const tries = await redis.incr(`mfa:attempts:${userId}`);
+  if (tries === 1) await redis.expire(`mfa:attempts:${userId}`, 900);
+  if (tries > 5) return res.status(429).json({ error: "Too many attempts" });
+
+  // Must reject a code already accepted in its time step (RFC 6238 §5.2)
   const isValid = await verifyTOTP(userId, code);
 
   if (!isValid) return res.status(401).json({ error: "Invalid code" });
@@ -656,7 +704,7 @@ Modern alternative to passwords using hardware security keys or biometrics.
 **Implementation:**
 
 - Node.js: `SimpleWebAuthn` library
-- Python: `py_webauthn` library
+- Python: [py_webauthn](https://github.com/duo-labs/py_webauthn) (`pip install webauthn`)
 
 ---
 
@@ -665,20 +713,37 @@ Modern alternative to passwords using hardware security keys or biometrics.
 Prevent credential stuffing and brute force attacks with rate limiting on login attempts.
 
 ```javascript
-// Track failed login attempts (Redis)
-const attempts = await redis.incr(`login:attempts:${email}`);
-await redis.expire(`login:attempts:${email}`, 600); // 10 min window
+app.post("/auth/login", async (req, res) => {
+  const { email, password } = req.body;
 
-if (attempts > 5) {
-  // Lock account for 15 minutes
-  await redis.setex(`login:locked:${email}`, 900, "1");
-  return res.status(429).json({
-    error: "Too many failed attempts. Try again in 15 minutes.",
-  });
-}
+  // Refuse while locked (the lock must be checked, not only written)
+  if (await redis.exists(`login:locked:${email}`)) {
+    return res.status(429).json({
+      error: "Too many failed attempts. Try again in 15 minutes.",
+    });
+  }
 
-// On successful login, reset attempts
-await redis.del(`login:attempts:${email}`);
+  const ok = await verifyPassword(email, password);
+  if (!ok) {
+    // Count failures in a fixed 10 min window (EXPIRE only on the first hit)
+    const attempts = await redis.incr(`login:attempts:${email}`);
+    if (attempts === 1) await redis.expire(`login:attempts:${email}`, 600);
+
+    if (attempts >= 5) {
+      // Lock for 15 minutes. Pair with the per-IP /login limit so an
+      // attacker cannot lock victims out on purpose
+      await redis.setex(`login:locked:${email}`, 900, "1");
+      return res.status(429).json({
+        error: "Too many failed attempts. Try again in 15 minutes.",
+      });
+    }
+    return res.status(401).json({ error: "Invalid credentials" });
+  }
+
+  // On successful login, reset attempts
+  await redis.del(`login:attempts:${email}`);
+  // ...issue tokens
+});
 ```
 
 ---
@@ -688,22 +753,21 @@ await redis.del(`login:attempts:${email}`);
 Implement token blacklist for immediate logout during security incidents.
 
 ```javascript
-// Revoke token on logout
-app.post("/auth/logout", async (req, res) => {
-  const token = req.headers.authorization?.split(" ")[1];
-  const decoded = jwt.decode(token);
+// Revoke token on logout (tokens must be issued with a jti claim)
+app.post("/auth/logout", authenticate, async (req, res) => {
+  // authenticate ran jwt.verify(); never act on jwt.decode() output
+  const { jti, exp } = req.user;
 
   // Add to blacklist until token would naturally expire
-  const ttl = decoded.exp - Math.floor(Date.now() / 1000);
-  await redis.setex(`blacklist:${token}`, ttl, "1");
+  const ttl = exp - Math.floor(Date.now() / 1000);
+  if (ttl > 0) await redis.setex(`blacklist:${jti}`, ttl, "1");
 
   res.json({ message: "Logged out successfully" });
 });
 
-// Middleware to check blacklist
+// Middleware to check blacklist (runs after jwt.verify)
 async function checkBlacklist(req, res, next) {
-  const token = req.headers.authorization?.split(" ")[1];
-  const isBlacklisted = await redis.exists(`blacklist:${token}`);
+  const isBlacklisted = await redis.exists(`blacklist:${req.user.jti}`);
 
   if (isBlacklisted) {
     return res.status(401).json({ error: "Token revoked" });
@@ -742,12 +806,7 @@ Enable encryption at database creation - protects against physical disk theft an
 
 **Application-Level Encryption** (for sensitive PII/PHI/PCI data):
 
-Encrypt sensitive fields in application code before writing to database using AES-256-GCM or equivalent:
-
-- Encrypt: Credit card numbers, SSNs, medical records, financial data
-- Use envelope encryption: Generate data encryption key (DEK) from KMS (AWS KMS, GCP Cloud KMS, Azure Key Vault)
-- Store encrypted DEK alongside ciphertext in database
-- Libraries: AWS Encryption SDK, Google Tink, Azure SDK
+Encrypt sensitive fields in application code (AES-256-GCM, envelope encryption with cloud KMS) before writing to the database. The pattern, libraries, and schema caveats are in [Field-Level Encryption for PII/PHI](#field-level-encryption-for-piiphi) below.
 
 **Why both layers**:
 
@@ -756,7 +815,8 @@ Encrypt sensitive fields in application code before writing to database using AE
 
 **When application-level encryption is required**:
 
-- HIPAA PHI, PCI-DSS cardholder data, highly sensitive PII
+- PCI DSS stored PAN (disk-level encryption alone doesn't satisfy Req 3.5.1 on non-removable media, per 3.5.1.2)
+- HIPAA PHI and highly sensitive PII when your risk analysis calls for it (HIPAA treats encryption as addressable)
 - Zero-trust requirements (don't trust cloud admins or DBAs)
 - Multi-tenant SaaS with customer-managed encryption keys
 - Regulatory requirements for end-to-end encryption
@@ -770,7 +830,7 @@ For highly sensitive data (PII, PHI, PCI), encrypt specific fields in applicatio
 - PII: SSNs, passport numbers, driver's license numbers
 - PHI: Medical records, diagnoses, prescriptions
 - PCI: Credit card numbers, CVV codes
-- Compliance requirements (GDPR, HIPAA, PCI-DSS) mandating protection beyond database encryption
+- Compliance drivers: PCI DSS requires stored PAN on non-removable media to be protected beyond disk encryption (Req 3.5.1.2); GDPR (Art. 32) and HIPAA treat encryption as a risk-based measure
 
 **Envelope Encryption Pattern:**
 
@@ -798,7 +858,7 @@ Encrypt all network communication to protect data as it travels between clients,
 
 - **TLS 1.3** (Recommended): Faster handshake, improved security, removed weak ciphers
 - **TLS 1.2** (Acceptable): Use as fallback for legacy client compatibility
-- **Deprecate TLS 1.0/1.1**: Both are outdated and vulnerable (POODLE, BEAST attacks)
+- **Disable TLS 1.0/1.1**: Formally deprecated by RFC 8996 (2021) because they depend on SHA-1/MD5 and lack modern AEAD ciphers (POODLE is an SSL 3.0 attack; BEAST targets TLS 1.0 CBC)
 
 Prefer TLS 1.3 for all modern clients (browsers, mobile apps, API clients). Use TLS 1.2 fallback only if analytics show significant traffic from legacy systems.
 
@@ -807,8 +867,8 @@ Prefer TLS 1.3 for all modern clients (browsers, mobile apps, API clients). Use 
 **Cloudflare Setup**:
 
 - **Client → Cloudflare**: Cloudflare's SSL certificate (automatic, managed by Cloudflare)
-- **Cloudflare → Origin Server**: Origin server's SSL certificate (Cloudflare Origin Certificate or self-signed)
-- **SSL Mode**: Set to **Strict** or **Full (Strict)** in Cloudflare dashboard
+- **Cloudflare → Origin Server**: Origin server's SSL certificate (Cloudflare Origin CA certificate or a publicly trusted one; self-signed certificates fail Full (strict) validation)
+- **SSL Mode**: Set to **Full (strict)** in the Cloudflare dashboard (**Strict (SSL-Only Origin Pull)** is Enterprise-only)
   - Validates origin certificate and prevents man-in-the-middle attacks
   - Never use **Flexible** mode (Cloudflare → Origin uses unencrypted HTTP)
 - **Why this matters**: Traffic between Cloudflare edge and origin traverses the internet, encryption is mandatory
@@ -826,30 +886,30 @@ Two approaches depending on security requirements:
 
 2. **End-to-End TLS** (compliance scenarios):
    - Both load balancer and origin have certificates, HTTPS throughout
-   - **Required for**: HIPAA, PCI-DSS, SOC 2, zero-trust architecture
+   - **Use for**: zero-trust architecture, or where your HIPAA/PCI DSS risk assessment or auditor expects it (PCI DSS 4.2.1 mandates strong crypto only over open, public networks)
    - Defense in depth - traffic encrypted even within VPC
 
 **Database Connection Encryption**:
 
 Always enforce SSL/TLS for database connections to prevent credential exposure:
 
-- **AWS RDS**: Set `require_secure_transport = 1` parameter, use `sslmode=require` in connection string
-- **GCP Cloud SQL**: Enable "Require SSL" option, download server CA certificate
+- **AWS RDS**: PostgreSQL: set `rds.force_ssl = 1` in the parameter group (default on for PostgreSQL 15+); MySQL/MariaDB: set `require_secure_transport = ON`. Connect with `sslmode=verify-full` plus the RDS CA bundle (`sslrootcert=`)
+- **GCP Cloud SQL**: `gcloud sql instances patch INSTANCE --ssl-mode=ENCRYPTED_ONLY` (the legacy "Require SSL" / `require-ssl` flag is superseded by `ssl_mode`), download the server CA certificate
 - **Azure Database**: Set `require_secure_transport = ON`, use SSL connection string parameter
 
 Example connection strings:
 
 ```python
-# PostgreSQL with SSL
-DATABASE_URL = "postgresql://user:pass@host:5432/db?sslmode=require"
+# PostgreSQL: verify-full encrypts AND checks the server certificate + hostname (sslmode=require only encrypts)
+DATABASE_URL = "postgresql://user:pass@host:5432/db?sslmode=verify-full&sslrootcert=/etc/ssl/certs/provider-ca.pem"
 
-# MySQL with SSL
-DATABASE_URL = "mysql://user:pass@host:3306/db?ssl-mode=REQUIRED"
+# MySQL (SQLAlchemy + mysqlclient): VERIFY_IDENTITY checks certificate + hostname (REQUIRED only encrypts)
+DATABASE_URL = "mysql+mysqldb://user:pass@host:3306/db?ssl_mode=VERIFY_IDENTITY&ssl_ca=/etc/ssl/certs/provider-ca.pem"
 ```
 
 **Service-to-Service Communication**:
 
-- **Kubernetes deployments**: Use Istio service mesh for automatic mutual TLS (mTLS) between pods (see Kubernetes Security Guide)
+- **Kubernetes deployments**: Use a service mesh such as Istio for mTLS between pods; Istio auto-upgrades mesh traffic but accepts plaintext (PERMISSIVE) until you apply a `PeerAuthentication` with `mode: STRICT` (see Kubernetes Security Guide)
 - **Non-Kubernetes**: Internal API calls should use HTTPS or be isolated in private network with strict access controls
 - **External third-party APIs**: Always use HTTPS, validate TLS certificates, enforce TLS 1.2+ minimum
 
@@ -858,6 +918,7 @@ DATABASE_URL = "mysql://user:pass@host:3306/db?ssl-mode=REQUIRED"
 - Use managed certificates with automatic renewal: Let's Encrypt (free), AWS ACM, GCP Certificate Manager, Azure certificates
 - Set HSTS header `Strict-Transport-Security: max-age=31536000; includeSubDomains` to force HTTPS in browsers
 - Automate rotation for origin certificates (30-90 day validity recommended)
+- **Certificate lifetimes are shrinking**: CA/Browser Forum ballot SC-081v3 caps public TLS certificates at 200 days since March 15, 2026, 100 days from March 15, 2027, and 47 days from March 15, 2029. Manual renewal is already dead - anything not on ACME or a managed certificate service (ACM, GCP Certificate Manager, Azure App Service certificates) will expire in production. Inventory every public certificate now, including load balancers, mail and VPN endpoints
 
 ### Request Validation
 
@@ -874,13 +935,22 @@ Configure your web framework or API gateway to enforce method restrictions per e
 
 ```python
 # Python FastAPI example
-@app.get("/users/{id}")  # Only allows GET
-async def get_user(id: int):
-    return user
+from fastapi import FastAPI
+from pydantic import BaseModel
 
-@app.post("/users")  # Only allows POST
+app = FastAPI()
+
+class User(BaseModel):
+    name: str
+    email: str
+
+@app.get("/users/{user_id}")  # Only allows GET; other methods get 405
+async def get_user(user_id: int):
+    return {"id": user_id}
+
+@app.post("/users", status_code=201)  # Only allows POST
 async def create_user(user: User):
-    return created_user
+    return user
 ```
 
 This prevents method confusion attacks and ensures endpoints behave as designed. For example, a GET endpoint should never modify data, and attempting a POST to a read-only endpoint should be immediately rejected.
@@ -896,6 +966,25 @@ Validation libraries:
 - Go: [go-playground/validator](https://github.com/go-playground/validator)
 
 Validate: Required fields, data types, value constraints (length, ranges, patterns), enum values, nested structure
+
+**Request Size & Timeout Limits**:
+
+Unbounded bodies and slow clients are the cheapest DoS there is. Cap both before the parser runs:
+
+- **Body size**: Set an explicit per-route limit and return **413 Content Too Large**. Express `express.json()` defaults to 100 KB - keep it there and raise only on upload routes
+- **Gateway caps are not your limit**: Lambda accepts 6 MB synchronous payloads, far more than any JSON API needs - set your own, smaller limit in code
+- **Timeouts**: Bound header/body read time and idle keep-alive at the server (slowloris), and keep the function timeout at or below the gateway integration timeout so work doesn't continue after the client got a 504 (API Gateway's default ceiling is 29 s; raisable for Regional/private REST APIs)
+- **Depth and count**: Reject deeply nested JSON and arrays over a few thousand elements - schema validators run after the parser has already allocated
+
+```javascript
+// Express: small default body limit, larger only where uploads are expected
+app.use(express.json({ limit: "100kb" }));
+app.post("/uploads", express.raw({ type: "*/*", limit: "5mb" }), uploadHandler);
+
+// Node http.Server: kill slow clients
+server.headersTimeout = 10_000; // ms to receive complete headers
+server.requestTimeout = 30_000; // ms to receive the whole request
+```
 
 ### Input Sanitization
 
@@ -918,7 +1007,7 @@ Prevent injection attacks through proper input handling:
 
 **Path Traversal**:
 
-- Validate paths don't contain `..`, `/`, `\`
+- Canonicalize the path (e.g. `realpath`) after decoding and reject it unless it stays under the allowed base directory; `..`/`/`/`\` blocklists miss encoded variants
 - Use allowlists for file paths
 
 **General Sanitization**:
@@ -1013,28 +1102,36 @@ async function rateLimitMiddleware(
   res: Response,
   next: NextFunction,
   limit: number,
-  window: number // seconds
+  window: number, // seconds
 ) {
+  // Behind Cloudflare/ALB, req.ip is the edge's address unless Express trusts
+  // the proxy (app.set("trust proxy", <hop count or CIDR list>)); never `true`,
+  // or clients can spoof X-Forwarded-For and dodge the limit
   const key = req.user?.id || req.ip || "anonymous";
-  const redisKey = `ratelimit:${key}`;
+  // Scope per route so /login and /api/data limits don't share state
+  const redisKey = `ratelimit:${req.baseUrl}${req.route?.path}:${key}`;
   const now = Date.now();
   const windowStart = now - window * 1000;
 
-  // Remove old requests and count current
-  await redis.zremrangebyscore(redisKey, 0, windowStart);
-  const count = await redis.zcard(redisKey);
+  // Trim, add and count in one MULTI/EXEC: a separate check-then-add is a race
+  // that lets a concurrent burst through the limit
+  const results = await redis
+    .multi()
+    .zremrangebyscore(redisKey, 0, windowStart)
+    .zadd(redisKey, now, `${now}-${Math.random()}`)
+    .zcard(redisKey)
+    .expire(redisKey, window)
+    .exec();
+  const count = results![2][1] as number; // includes this request
 
   // Set rate limit headers
   res.setHeader("X-RateLimit-Limit", limit);
-  res.setHeader("X-RateLimit-Remaining", Math.max(0, limit - count - 1));
+  res.setHeader("X-RateLimit-Remaining", Math.max(0, limit - count));
 
-  if (count >= limit) {
+  if (count > limit) {
+    res.setHeader("Retry-After", window);
     return res.status(429).json({ error: "Rate limit exceeded" });
   }
-
-  // Add current request
-  await redis.zadd(redisKey, now, `${now}-${Math.random()}`);
-  await redis.expire(redisKey, window);
 
   next();
 }
@@ -1042,12 +1139,12 @@ async function rateLimitMiddleware(
 // Usage: Different limits for different endpoints
 app.post(
   "/api/login",
-  (req, res, next) => rateLimitMiddleware(req, res, next, 5, 60) // 5 per minute
+  (req, res, next) => rateLimitMiddleware(req, res, next, 5, 60), // 5 per minute
 );
 app.get(
   "/api/data",
   authenticate,
-  (req, res, next) => rateLimitMiddleware(req, res, next, 100, 3600) // 100 per hour
+  (req, res, next) => rateLimitMiddleware(req, res, next, 100, 3600), // 100 per hour
 );
 ```
 
@@ -1181,12 +1278,10 @@ Implement log retention policies to meet regulatory compliance requirements.
 
 ### Hot Storage (30 Days)
 
-Store active logs in fast-access storage for debugging and monitoring:
+Keep active logs in the centralized logging service chosen in [Log Forwarding & Centralization](#log-forwarding--centralization):
 
-- AWS CloudWatch Logs, GCP Cloud Logging, Azure Monitor
-- Splunk, ELK Stack, Loki
-- Enable searching, filtering, real-time alerts
 - 30-day retention sufficient for active troubleshooting
+- Set the retention policy on the log group/bucket itself so expiry is automatic, then archive (below)
 
 ### Cold Storage (Multi-Year for Compliance)
 
@@ -1198,12 +1293,13 @@ Archive logs in compressed, low-cost storage for regulatory compliance:
 
 **Retention Requirements by Compliance Standard:**
 
-| Compliance Standard | Retention Period | Scope                                              |
-| ------------------- | ---------------- | -------------------------------------------------- |
-| **SOC2**            | 1-7 years        | Audit logs, access logs, security events           |
-| **ISO 27001**       | 1-3 years        | Security logs, incident records                    |
-| **HIPAA**           | 6 years          | PHI access logs, audit trails                      |
-| **GDPR**            | 1-3 years        | Personal data access logs (with right to deletion) |
+| Compliance Standard | Retention Period                                   | Scope                                                                      |
+| ------------------- | -------------------------------------------------- | -------------------------------------------------------------------------- |
+| **PCI DSS v4.0.1**  | 12 months (3 months immediately available)         | Audit logs for in-scope systems (Req 10.5.1)                               |
+| **HIPAA**           | 6 years                                            | Security Rule documentation, incl. audit records (45 CFR 164.316(b)(2)(i)) |
+| **SOC 2**           | Not prescribed; set and document your own          | Audit logs, access logs, security events                                   |
+| **ISO 27001**       | Not prescribed; set and document your own          | Security logs, incident records                                            |
+| **GDPR**            | No fixed period; storage limitation (Art. 5(1)(e)) | Personal data kept no longer than necessary                                |
 
 **Archive Process:**
 
@@ -1216,7 +1312,7 @@ Archive logs in compressed, low-cost storage for regulatory compliance:
 
 **Data Privacy**:
 
-- Never log sensitive PII (passwords, credit cards, SSNs) without encryption/hashing
+- Never log passwords, tokens, CVVs or full card numbers; mask or tokenize other sensitive PII, and use a keyed hash (HMAC) when you need a joinable value (plain hashes of SSNs are brute-forceable)
 - Implement data retention policies compliant with GDPR right to deletion
 - Redact or hash sensitive fields in logs
 
@@ -1256,7 +1352,9 @@ Execute independent operations in parallel to reduce total latency. Don't overwh
 const user = await getUser(userId);
 const posts = await getPosts(userId);
 const comments = await getComments(userId);
+```
 
+```javascript
 // Parallel (fast): 100ms total
 const [user, posts, comments] = await Promise.all([
   getUser(userId),
@@ -1269,8 +1367,9 @@ const [user, posts, comments] = await Promise.all([
 
 ```go
 var wg sync.WaitGroup
-go func() { user = getUser(userID); wg.Done() }()
-go func() { posts = getPosts(userID); wg.Done() }()
+wg.Add(2) // or wg.Go(func() { ... }) on Go 1.25+
+go func() { defer wg.Done(); user = getUser(userID) }()
+go func() { defer wg.Done(); posts = getPosts(userID) }()
 wg.Wait()
 ```
 
@@ -1296,8 +1395,8 @@ Implement caching at multiple layers to reduce latency and backend load.
 
 **API Gateway Caching**:
 
-- AWS API Gateway, GCP Cloud Endpoints cache responses
-- Configure TTL per endpoint (seconds to hours)
+- AWS API Gateway (REST APIs) caches responses; GCP Cloud Endpoints does not - put Cloud CDN in front of the load balancer instead
+- Configure TTL per endpoint (AWS API Gateway: 0 to 3600 seconds)
 - Reduces backend invocations for identical requests
 - **Critical**: For authenticated endpoints, cache key MUST include authentication context (user ID, auth token) to prevent serving user A's data to user B
 - Safe to cache: Public GET endpoints, static reference data
@@ -1309,7 +1408,13 @@ Implement caching at multiple layers to reduce latency and backend load.
 - Session storage for faster lookups
 - Set appropriate TTLs based on data staleness tolerance
 
-**Database Performance Considerations**:
+**Cache Invalidation**:
+
+- Invalidate on data updates (write-through or write-behind)
+- Use versioned cache keys for easy invalidation
+- Monitor cache hit rates to optimize TTLs
+
+### Database Performance Considerations
 
 For API performance, consider these database patterns:
 
@@ -1322,15 +1427,9 @@ For API performance, consider these database patterns:
 
 **Implementation:** Use connection pooling libraries (application-level for containers, RDS Proxy for serverless). Route reads to replicas, writes to primary. Set query timeouts (5s). Always use parameterized queries.
 
-**Cache Invalidation**:
+### Cold Start Optimization
 
-- Invalidate on data updates (write-through or write-behind)
-- Use versioned cache keys for easy invalidation
-- Monitor cache hit rates to optimize TTLs
-
-### Serverless Cold Start Mitigation
-
-Beyond provisioned concurrency and scheduled invocations (see Architecture Patterns section):
+Beyond provisioned concurrency and scheduled invocations (see [Serverless Cold Start Mitigation](#serverless-cold-start-mitigation) in Architecture Patterns):
 
 **Optimize Package Size**:
 
@@ -1384,7 +1483,7 @@ Implement versioning to manage breaking changes without disrupting existing clie
 Timeline and communication:
 
 - Announce deprecation 6-12 months before removal
-- Return deprecation headers: `Deprecation: true`, `Sunset: Wed, 11 Nov 2026 11:11:11 GMT`
+- Return deprecation headers per RFC 9745 / RFC 8594: `Deprecation: @1778457600` (Unix timestamp of the deprecation date), `Sunset: Wed, 11 Nov 2026 11:11:11 GMT`, and `Link: <https://api.example.com/docs/migration>; rel="deprecation"`
 - Document migration path in API documentation
 - Support minimum 2 versions simultaneously (current + previous)
 
@@ -1401,7 +1500,7 @@ Configure least-privilege access control for API infrastructure, service account
 
 ### Cloud IAM Policies
 
-**Serverless Functions** (AWS Lambda, GCP Cloud Functions, Azure Functions):
+**Serverless Functions** (AWS Lambda, GCP Cloud Run functions, Azure Functions):
 
 Attach minimal execution role to each function:
 
@@ -1416,7 +1515,11 @@ Attach minimal execution role to each function:
     },
     {
       "Effect": "Allow",
-      "Action": ["logs:CreateLogStream", "logs:PutLogEvents"],
+      "Action": [
+        "logs:CreateLogGroup",
+        "logs:CreateLogStream",
+        "logs:PutLogEvents"
+      ],
       "Resource": "arn:aws:logs:region:account:log-group:/aws/lambda/api-*"
     }
   ]
@@ -1429,13 +1532,14 @@ Attach minimal execution role to each function:
 # Create service account
 gcloud iam service-accounts create api-function-sa
 
-# Grant specific permissions
-gcloud projects add-iam-policy-binding PROJECT_ID \
+# Grant access to the specific secret only (a project-level binding exposes every secret in the project)
+gcloud secrets add-iam-policy-binding prod-api-db-password \
   --member="serviceAccount:api-function-sa@PROJECT_ID.iam.gserviceaccount.com" \
   --role="roles/secretmanager.secretAccessor"
 
-# Deploy with service account
-gcloud functions deploy api-function \
+# Deploy with service account (Cloud Functions is now Cloud Run functions)
+gcloud run deploy api-function --source . --function handler --base-image RUNTIME_ID \
+  --region REGION \
   --service-account=api-function-sa@PROJECT_ID.iam.gserviceaccount.com
 ```
 
@@ -1445,14 +1549,16 @@ gcloud functions deploy api-function \
 # Enable managed identity
 az functionapp identity assign --name api-function-app --resource-group production-rg
 
-# Grant Key Vault access
-az keyvault set-policy --name prod-keyvault --object-id PRINCIPAL_ID --secret-permissions get
+# Grant Key Vault access (new vaults default to Azure RBAC; `az keyvault set-policy` fails on RBAC vaults)
+az role assignment create --role "Key Vault Secrets User" \
+  --assignee-object-id PRINCIPAL_ID --assignee-principal-type ServicePrincipal \
+  --scope "$(az keyvault show --name prod-keyvault --query id -o tsv)"
 ```
 
 **Container/VM Roles**:
 
 - AWS: Attach IAM role to EC2 instance profile or ECS task role
-- GCP: Use Workload Identity (see Kubernetes Security Guide)
+- GCP: Use Workload Identity Federation for GKE (see Kubernetes Security Guide)
 - Azure: Use managed identity
 - Never store credentials in environment variables or config files
 
@@ -1488,12 +1594,13 @@ Prevent accumulation of unused, over-privileged, or compromised accounts through
 
 **Rotation Procedures:**
 
-While workload identity/IAM roles use temporary credentials, service account keys require rotation.
+While workload identity/IAM roles use temporary credentials, service account keys require rotation. Prefer short-lived workload identity so there is nothing static to rotate.
 
 **Rotation Schedule:**
 
-- Every 90 days (compliance: PCI-DSS, SOC2, ISO 27001)
+- On a documented, risk-based schedule; 90 days is a common choice, not a mandate. PCI DSS v4.0.1 Req 8.6.3 requires application and system account passwords to be changed "periodically (at the frequency defined in the entity's targeted risk analysis) and upon suspicion or confirmation of compromise"; SOC 2 and ISO 27001 set no interval
 - Immediate rotation: Suspected compromise, employee departure, key leakage
+- NIST SP 800-63B-4's rule against forced periodic changes covers user passwords only, never service credentials
 
 **Zero-Downtime Rotation Steps:**
 
@@ -1520,31 +1627,42 @@ Set up automated alerts for suspicious patterns:
 **Detection Example (AWS CloudTrail):**
 
 ```python
+import json
+from datetime import datetime, timedelta, timezone
+
+import boto3
+
+cloudtrail = boto3.client('cloudtrail')
+
 # Monitor AssumeRole events for anomalies
 def detect_anomalies():
-    events = cloudtrail.lookup_events(
+    paginator = cloudtrail.get_paginator('lookup_events')  # 50 events per page
+    pages = paginator.paginate(
         LookupAttributes=[{'AttributeKey': 'EventName', 'AttributeValue': 'AssumeRole'}],
-        StartTime=datetime.now() - timedelta(hours=1)
+        StartTime=datetime.now(timezone.utc) - timedelta(hours=1),
     )
 
-    for event in events:
-        source_ip = event.get('SourceIPAddress')
-        if not is_expected_ip(source_ip):
-            alert_security_team(f"Anomalous access from {source_ip}")
+    for page in pages:
+        for event in page['Events']:
+            # The raw record (with sourceIPAddress) is a JSON string in CloudTrailEvent
+            record = json.loads(event['CloudTrailEvent'])
+            source_ip = record.get('sourceIPAddress')
+            if not is_expected_ip(source_ip):
+                alert_security_team(f"Anomalous access from {source_ip}")
 ```
 
 ---
 
 **Service Accounts vs Workload Identity:**
 
-| Feature         | Service Account Keys | Workload Identity (IAM Roles) |
-| --------------- | -------------------- | ----------------------------- |
-| Rotation        | Manual, 90 days      | Automatic, 15-60 min          |
-| Compromise Risk | High (long-lived)    | Low (temporary)               |
-| Leakage Risk    | High (keys in logs)  | None (no keys)                |
-| Use Case        | Cross-cloud, CI/CD   | Cloud-native apps             |
+| Feature         | Service Account Keys | Workload Identity (IAM Roles)                  |
+| --------------- | -------------------- | ---------------------------------------------- |
+| Rotation        | Manual, risk-based   | Automatic, short-lived (minutes to hours)      |
+| Compromise Risk | High (long-lived)    | Low (temporary)                                |
+| Leakage Risk    | High (keys in logs)  | Low (no stored keys; still stealable via SSRF) |
+| Use Case        | Cross-cloud, CI/CD   | Cloud-native apps                              |
 
-**Recommendation**: Always prefer workload identity (AWS IRSA, GKE Workload Identity, AKS Managed Identity) over service account keys when available. Use keys only when workload identity is not an option.
+**Recommendation**: Always prefer workload identity (EKS Pod Identity - AWS now recommends it over IRSA, Workload Identity Federation for GKE, Microsoft Entra Workload ID on AKS) over service account keys when available. Use keys only when workload identity is not an option.
 
 ---
 
@@ -1569,20 +1687,19 @@ def detect_anomalies():
 **Serverless Cold Start Caching**:
 
 ```python
-import boto3
-from functools import lru_cache
+import botocore.session
+from aws_secretsmanager_caching import SecretCache, SecretCacheConfig
 
-secrets_client = boto3.client('secretsmanager')
-
-@lru_cache(maxsize=128)
-def get_secret(secret_name):
-    response = secrets_client.get_secret_value(SecretId=secret_name)
-    return response['SecretString']
+# Built once per execution environment; entries refresh every 5 minutes
+client = botocore.session.get_session().create_client('secretsmanager')
+cache = SecretCache(config=SecretCacheConfig(secret_refresh_interval=300), client=client)
 
 def lambda_handler(event, context):
-    db_password = get_secret('prod/api/db-password')
-    # Secret cached for container lifetime
+    db_password = cache.get_secret_string('prod/api/db-password')
+    # Warm invocations hit the cache; a rotated secret is picked up within 5 minutes
 ```
+
+Never cache a secret with `functools.lru_cache`: it has no TTL, and Lambda keeps warm environments for hours, so a rotated password stays stale until the environment is recycled. The AWS Parameters and Secrets Lambda Extension (HTTP on `localhost:2773`, 300 s TTL by default) does the same without a code dependency.
 
 **Container Startup Pattern**:
 
@@ -1603,18 +1720,24 @@ config = Config()
 **Long-Running Service Refresh**:
 
 ```python
+import logging
 import time
 from threading import Thread
 
 class SecretManager:
     def __init__(self):
-        self.secrets = {}
+        # Load synchronously so callers never see an empty dict
+        self.secrets = {'db_password': fetch_secret('prod/api/db-password')}
         Thread(target=self._refresh_loop, daemon=True).start()
 
     def _refresh_loop(self):
         while True:
-            self.secrets['db_password'] = fetch_secret('prod/api/db-password')
             time.sleep(3600)  # Refresh hourly
+            try:
+                self.secrets['db_password'] = fetch_secret('prod/api/db-password')
+            except Exception:
+                # Keep the last known-good value; one failed refresh must not kill the loop
+                logging.exception("Secret refresh failed, retrying next interval")
 ```
 
 ### Monitoring and Auditing
@@ -1625,12 +1748,7 @@ class SecretManager:
 - GCP Cloud Audit Logs: Log service account usage, Secret Manager access
 - Azure Activity Logs: Log managed identity auth, Key Vault access
 
-**Alert on Suspicious Activity**:
-
-- Failed authentication (>5 attempts in 10 minutes)
-- Secret access from unexpected IPs/regions
-- New IAM policy attachments or role assumptions
-- Service account usage outside normal hours
+**Alert on Suspicious Activity**: feed the triggers from the Monitoring for Compromise table (Service Account Management, above) into your SIEM, plus alerts on new IAM policy attachments and on secret access from unexpected IPs/regions.
 
 **Regular Audits**:
 
@@ -1727,10 +1845,10 @@ This guide's security controls prevent real-world attacks commonly seen in produ
 - Attack: Overwhelming API with requests to cause degradation or outage
 - Mitigated by: Edge DDoS protection (Cloudflare, AWS Shield, Cloud Armor), aggressive edge rate limiting (100-2000 req/min per IP), endpoint-specific limits, auto-scaling
 
-**Cache Poisoning**
+**Cached Data Leakage & Cache Poisoning**
 
-- Attack: Serving user A's cached data to user B, leaking sensitive information
-- Mitigated by: Cache keys include authentication context, `Cache-Control: no-store` on sensitive endpoints, proper CORS, authentication-aware API Gateway caching
+- Attack: A shared cache serves user A's response to user B, or an attacker gets a harmful response cached for everyone via unkeyed inputs (e.g. `X-Forwarded-Host`)
+- Mitigated by: Cache keys include the verified caller identity, `Cache-Control: no-store`/`private` on user-specific responses, never reflecting unkeyed headers into responses, `Vary: Origin` when CORS headers vary, authentication-aware API Gateway caching
 
 **Dependency Vulnerabilities**
 
@@ -1745,6 +1863,7 @@ This guide's security controls prevent real-world attacks commonly seen in produ
 - [TruffleHog](https://github.com/trufflesecurity/trufflehog)
 - [Semgrep](https://semgrep.dev/)
 - [Opengrep](https://github.com/opengrep/opengrep)
+- [Aikido Security](https://www.aikido.dev/)
 - [Coraza](https://github.com/corazawaf/coraza)
 - [ModSecurity](https://github.com/owasp-modsecurity/ModSecurity)
 
@@ -1760,8 +1879,21 @@ This guide's security controls prevent real-world attacks commonly seen in produ
 
 ### Standards & Documentation
 
-- [OWASP Top 10](https://owasp.org/www-project-top-ten/)
-- [OWASP API Security Top 10](https://owasp.org/www-project-api-security/)
+- [OWASP Top 10](https://owasp.org/projects/top-ten)
+- [OWASP API Security Top 10](https://api-security.owasp.org/)
 - [OpenAPI Specification](https://swagger.io/specification/)
 - [OAuth 2.0](https://oauth.net/2/)
-- [JWT](https://jwt.io/)
+- [JWT](https://www.jwt.io/)
+- [OWASP API1:2023 Broken Object Level Authorization](https://api-security.owasp.org/editions/2023/en/0xa1-broken-object-level-authorization/)
+- [RFC 9700: OAuth 2.0 Security Best Current Practice](https://www.rfc-editor.org/rfc/rfc9700.html)
+- [CA/Browser Forum Ballot SC-081v3 (certificate validity schedule)](https://cabforum.org/2025/04/11/ballot-sc081v3-introduce-schedule-of-reducing-validity-and-data-reuse-periods/)
+- [Node.js http.Server timeouts](https://nodejs.org/api/http.html#serverrequesttimeout)
+- [RFC 9745 Deprecation Header](https://www.rfc-editor.org/rfc/rfc9745.html)
+- [PCI DSS v4.0.1](https://docs-prv.pcisecuritystandards.org/PCI%20DSS/Standard/PCI-DSS-v4_0_1.pdf)
+- [NIST SP 800-63B-4](https://pages.nist.gov/800-63-4/sp800-63b.html)
+
+### Incident Reports
+
+- [Optus breach caused by a coding error, alleges ACMA (CSO Online)](https://www.csoonline.com/article/2492520/optus-breach-occurred-due-to-a-coding-error-alleges-acma.html)
+- [T-Mobile Form 8-K on the 2023 API breach (SEC)](https://www.sec.gov/Archives/edgar/data/1283699/000119312523010949/d641142d8k.htm)
+- [LinkedIn denies 700M-record scrape is a data breach (Computer Weekly)](https://www.computerweekly.com/news/252503281/LinkedIn-denies-exposure-of-700-million-user-records-is-a-data-breach)

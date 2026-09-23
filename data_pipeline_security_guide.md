@@ -1,6 +1,6 @@
 # Data Pipeline Security Guide
 
-**Last Updated:** January 28, 2026
+**Last Updated:** September 22, 2026
 
 A cloud-agnostic guide focused on securing production data pipelines (Kafka for streaming, Spark for processing) with defense-in-depth security, high availability, and disaster recovery. This guide includes industry best practices and lessons learned from real-world implementations.
 
@@ -25,7 +25,7 @@ A cloud-agnostic guide focused on securing production data pipelines (Kafka for 
    - [Network Isolation](#network-isolation)
 6. [Spark Security](#6-spark-security)
    - [Authentication & Authorization](#authentication--authorization)
-   - [Encryption](#encryption-1)
+   - [Spark Encryption](#spark-encryption)
    - [Network Security](#network-security)
    - [Secrets Management Integration](#secrets-management-integration)
 7. [Data Security & Compliance](#7-data-security--compliance)
@@ -66,7 +66,7 @@ This guide provides production-ready patterns for securing data pipelines across
 
 **Real-World Breaches:**
 
-- **Uber (2016)**: Exposed data pipeline credentials in GitHub, 57M users compromised
+- **Uber (2016)**: Attackers reused leaked passwords to log in to engineers' GitHub accounts (no MFA), found a hardcoded AWS access key in a private repository, and used it to download unencrypted database backups from S3, exposing 57M riders and drivers
 - **Elasticsearch clusters (ongoing)**: Unsecured Kafka/Elasticsearch pipelines exposing PII publicly
 - **Healthcare providers (multiple)**: Unencrypted data pipelines exposing PHI in transit
 - **Financial institutions**: Kafka ACL misconfigurations allowing unauthorized access to transaction streams
@@ -92,21 +92,21 @@ This guide provides production-ready patterns for securing data pipelines across
 
 Cloud-agnostic service options for managed Kafka, Spark, storage, and secrets management.
 
-| Service Category                  | AWS                               | GCP                           | Azure                         | Multi-Cloud               |
-| --------------------------------- | --------------------------------- | ----------------------------- | ----------------------------- | ------------------------- |
-| **Managed Kafka** (required)      | MSK (Managed Streaming for Kafka) | Managed Kafka (via Confluent) | Event Hubs (Kafka-compatible) | Confluent Cloud           |
-| **Managed Spark** (required)      | EMR (Elastic MapReduce)           | Dataproc                      | HDInsight, Databricks         | Databricks                |
-| **Object Storage** (required)     | S3                                | Cloud Storage (GCS)           | Blob Storage                  | -                         |
-| **Data Warehouse**                | Redshift, Athena                  | BigQuery                      | Synapse Analytics             | Snowflake                 |
-| **Schema Registry**               | MSK Schema Registry, Confluent    | Confluent Schema Registry     | Confluent Schema Registry     | Confluent Schema Registry |
-| **Secrets Management** (required) | Secrets Manager                   | Secret Manager                | Key Vault                     | HashiCorp Vault           |
-| **Key Management** (required)     | KMS                               | Cloud KMS                     | Key Vault                     | HashiCorp Vault           |
-| **Logging & SIEM** (required)     | CloudWatch Logs, CloudTrail       | Cloud Logging                 | Monitor                       | Splunk, ELK Stack, Loki   |
+| Service Category                  | AWS                               | GCP                              | Azure                         | Multi-Cloud               |
+| --------------------------------- | --------------------------------- | -------------------------------- | ----------------------------- | ------------------------- |
+| **Managed Kafka** (required)      | MSK (Managed Streaming for Kafka) | Managed Service for Apache Kafka | Event Hubs (Kafka-compatible) | Confluent Cloud           |
+| **Managed Spark** (required)      | EMR (Elastic MapReduce)           | Dataproc                         | HDInsight, Databricks         | Databricks                |
+| **Object Storage** (required)     | S3                                | Cloud Storage (GCS)              | Blob Storage                  | -                         |
+| **Data Warehouse**                | Redshift, Athena                  | BigQuery                         | Synapse Analytics             | Snowflake                 |
+| **Schema Registry**               | Glue Schema Registry, Confluent   | Confluent Schema Registry        | Confluent Schema Registry     | Confluent Schema Registry |
+| **Secrets Management** (required) | Secrets Manager                   | Secret Manager                   | Key Vault                     | HashiCorp Vault           |
+| **Key Management** (required)     | KMS                               | Cloud KMS                        | Key Vault                     | HashiCorp Vault           |
+| **Logging & SIEM** (required)     | CloudWatch Logs, CloudTrail       | Cloud Logging                    | Monitor                       | Splunk, ELK Stack, Loki   |
 
 **Notes:**
 
-- **Managed Kafka**: MSK, Confluent Cloud, or Event Hubs (Kafka-compatible). Never run self-managed Kafka in production.
-- **Managed Spark**: EMR, Dataproc, Databricks. Avoid running Spark on self-managed clusters.
+- **Managed Kafka**: MSK, GCP Managed Service for Apache Kafka, Confluent Cloud, or Event Hubs (Kafka-compatible). Never run self-managed Kafka in production.
+- **Managed Spark**: EMR, Dataproc (branded Managed Service for Apache Spark since April 2026; `gcloud dataproc` and the API keep the old name), Databricks. Avoid running Spark on self-managed clusters.
 - **Schema Registry**: Confluent Schema Registry is the de facto standard for Kafka schema management.
 
 ## 3. Do You Need Kafka + Spark?
@@ -144,23 +144,23 @@ Choose Kafka + Spark when you have **proven requirements**:
 
 **You probably DON'T need Kafka + Spark if:**
 
-- ❌ You have <50k events/day (use SQS + Lambda or Pub/Sub + Cloud Functions)
+- ❌ You have <50k events/day (use SQS + Lambda or Pub/Sub + Cloud Run functions)
 - ❌ Events don't need replay (use simple queues)
 - ❌ Single consumer per event type (use SQS, Pub/Sub, Service Bus)
-- ❌ Simple transformations (map, filter) (use Lambda, Cloud Functions)
+- ❌ Simple transformations (map, filter) (use Lambda, Cloud Run functions)
 - ❌ Your team is <20 engineers (operational complexity too high)
 - ❌ Budget is <$800/month for data infrastructure
 
 **Simpler Alternatives:**
 
-| Use Case                 | Instead of Kafka + Spark                | Why                               |
-| ------------------------ | --------------------------------------- | --------------------------------- |
-| Simple async jobs        | SQS + Lambda                            | Serverless, $0-50/month, zero ops |
-| Event notifications      | SNS + Lambda, Pub/Sub + Cloud Functions | Built-in fan-out, managed         |
-| Log aggregation          | CloudWatch Logs, Cloud Logging, Kinesis | Purpose-built, cheaper            |
-| ETL (batch only)         | AWS Glue, Dataflow, Azure Data Factory  | Managed, serverless               |
-| Simple stream processing | Kinesis Analytics, Dataflow             | Simpler than Spark                |
-| Small-scale analytics    | BigQuery direct inserts, Redshift COPY  | No intermediate streaming layer   |
+| Use Case                 | Instead of Kafka + Spark                    | Why                               |
+| ------------------------ | ------------------------------------------- | --------------------------------- |
+| Simple async jobs        | SQS + Lambda                                | Serverless, $0-50/month, zero ops |
+| Event notifications      | SNS + Lambda, Pub/Sub + Cloud Run functions | Built-in fan-out, managed         |
+| Log aggregation          | CloudWatch Logs, Cloud Logging, Kinesis     | Purpose-built, cheaper            |
+| ETL (batch only)         | AWS Glue, Dataflow, Azure Data Factory      | Managed, serverless               |
+| Simple stream processing | Managed Service for Apache Flink, Dataflow  | Simpler than Spark                |
+| Small-scale analytics    | BigQuery direct inserts, Redshift COPY      | No intermediate streaming layer   |
 
 **Example: Event-Driven Architecture Without Kafka**
 
@@ -168,9 +168,9 @@ Choose Kafka + Spark when you have **proven requirements**:
 API → SNS Topic → [Lambda 1 (Email), Lambda 2 (Analytics), Lambda 3 (Webhook)]
 ```
 
-**Cost:** ~$10-50/month for millions of events
-**Operational Complexity:** Zero (fully managed)
-**When to migrate to Kafka:** When you need event replay or Lambda timeout limits (15 min) become a constraint
+- **Cost:** ~$10-50/month for millions of events
+- **Operational Complexity:** Zero (fully managed)
+- **When to migrate to Kafka:** When you need event replay or Lambda timeout limits (15 min) become a constraint
 
 ### Cost Comparison
 
@@ -184,22 +184,22 @@ API → SNS Topic → [Lambda 1 (Email), Lambda 2 (Analytics), Lambda 3 (Webhook
 
 **Kafka + Spark Stack (Managed Services):**
 
-- **AWS MSK** (3 brokers, kafka.m5.large): $350/month
+- **AWS MSK** (3 brokers, kafka.m5.large, 100 GB each): ~$490/month ($0.21/broker-hour + $0.10/GB-month, us-east-1)
 - **AWS EMR** (3 nodes, m5.xlarge, spot instances): $400-600/month
 - **S3 Storage** (500GB): $12/month
 - **Data Transfer**: $20-50/month
 - **Secrets Manager**: $1-3/month
 - **CloudWatch/Logging**: $10-30/month
-- **Total: $800-1,050/month**
+- **Total: $930-1,190/month**
 
 **Databricks Alternative (Managed Spark + Delta Lake):**
 
-- **Databricks** (Standard tier, spot instances): $600-1,000/month
-- **MSK or Confluent Cloud** (3 brokers): $350-500/month
+- **Databricks** (Premium tier, spot instances): $600-1,000/month
+- **MSK or Confluent Cloud** (3 brokers): $490+/month
 - **S3/GCS Storage**: $12-25/month
-- **Total: $1,000-1,500/month**
+- **Total: $1,100-1,500+/month**
 
-**Reality Check:** Kafka + Spark costs 10-25x more than SQS + Lambda for most workloads. Only adopt when you have specific requirements (event replay, complex transformations, >100k events/sec) that justify the cost and operational complexity.
+**Reality Check:** Kafka + Spark costs 10-50x more than SQS + Lambda for most workloads. Only adopt when you have specific requirements (event replay, complex transformations, >100k events/sec) that justify the cost and operational complexity.
 
 ## 4. Architecture Patterns
 
@@ -220,13 +220,16 @@ API → SNS Topic → [Lambda 1 (Email), Lambda 2 (Analytics), Lambda 3 (Webhook
 
 **Configuration Recommendations:**
 
-**Managed Kafka (MSK, Confluent Cloud, Event Hubs):**
+**Managed Kafka (MSK, GCP Managed Service for Apache Kafka, Confluent Cloud, Event Hubs):**
 
 - Multi-AZ deployment (3 availability zones minimum)
 - Encryption at rest (KMS/CMEK)
 - Encryption in transit (TLS 1.2+)
 - Private subnets (no public internet access)
 - IAM authentication or mTLS (not SASL/PLAIN)
+- KRaft metadata mode, never ZooKeeper: Kafka 4.0 (March 2025) removed ZooKeeper entirely, 3.9 is the last release that can migrate a ZooKeeper cluster, and GCP's Managed Service for Apache Kafka is KRaft-only. Start new clusters in KRaft mode: a 4.x version, or `3.9.x.kraft` on MSK.
+
+**MSK Express brokers:** For new MSK clusters, choose Express brokers (`express.m7g.large` and up) over Standard brokers. Storage is fully managed and pay-as-you-go (no EBS sizing, no disk-full pages), each broker delivers up to 3x the throughput of a Standard broker, partition moves and scaling run up to 20x faster, and recovery from a broker failure is about 90% quicker. Clusters are always 3-AZ, have no maintenance windows, and ship with MSK's best-practice guardrails and client throughput quotas. Trade-offs: select instance sizes only, Kafka 3.6/3.8/3.9/4.2 only (KRaft from 3.9), and Kafka Streams and KIP-932 queues are not yet fully supported. Use Standard brokers only when you need a version or feature Express does not offer.
 
 **Managed Spark (EMR, Dataproc, Databricks):**
 
@@ -300,7 +303,7 @@ Internet → Internet Gateway → Public Subnet (NAT Gateway, Bastion/VPN)
 - **Spark clusters** in private subnets (same VPC as Kafka or VPC peering)
 - **S3/GCS access** via VPC endpoints (no internet routing)
 - **Bastion host or VPN** for administrative access
-- **Security groups** allow only required traffic (Kafka: 9094 TLS, Spark: cluster-internal)
+- **Security groups** allow only required traffic (Kafka: 9098 IAM or 9094 mTLS, Spark: cluster-internal)
 
 **Benefits:**
 
@@ -321,11 +324,13 @@ Kafka supports multiple authentication mechanisms. Use IAM authentication (AWS M
 # MSK cluster with IAM authentication
 aws kafka create-cluster \
   --cluster-name production-kafka \
+  --kafka-version "3.9.x.kraft" \
+  --number-of-broker-nodes 3 \
   --broker-node-group-info '{
     "ClientSubnets": ["subnet-abc123", "subnet-def456", "subnet-ghi789"],
     "InstanceType": "kafka.m5.large",
     "SecurityGroups": ["sg-kafka"],
-    "StorageInfo": {"EbsStorageInfo": {"VolumeSize": 1000}}
+    "StorageInfo": {"EbsStorageInfo": {"VolumeSize": 100}}
   }' \
   --client-authentication '{
     "Sasl": {"Iam": {"Enabled": true}}
@@ -340,13 +345,27 @@ aws kafka create-cluster \
 
 ```python
 from kafka import KafkaProducer
+try:
+    from kafka.net.sasl.oauth import AbstractTokenProvider  # kafka-python 3.x
+except ImportError:
+    from kafka.sasl.oauth import AbstractTokenProvider  # kafka-python 2.1-2.3
 from aws_msk_iam_sasl_signer import MSKAuthTokenProvider
+
+
+class MSKTokenProvider(AbstractTokenProvider):
+    def __init__(self, region):
+        self.region = region
+
+    def token(self):
+        token, _ = MSKAuthTokenProvider.generate_auth_token(self.region)
+        return token
+
 
 producer = KafkaProducer(
     bootstrap_servers=['b-1.kafka.amazonaws.com:9098'],
     security_protocol='SASL_SSL',
     sasl_mechanism='OAUTHBEARER',
-    sasl_oauth_token_provider=MSKAuthTokenProvider(region='us-east-1'),
+    sasl_oauth_token_provider=MSKTokenProvider('us-east-1'),
     ssl_check_hostname=True
 )
 ```
@@ -359,17 +378,19 @@ producer = KafkaProducer(
 
 **Alternative: mTLS (Mutual TLS)**
 
-For Confluent Cloud or Event Hubs:
+For MSK with TLS client authentication (port 9094), or Confluent Cloud Dedicated clusters (and AWS Enterprise/Freight clusters) with your own CA uploaded:
 
 ```python
 producer = KafkaProducer(
-    bootstrap_servers=['kafka.confluent.cloud:9092'],
+    bootstrap_servers=['b-1.kafka.amazonaws.com:9094'],
     security_protocol='SSL',
     ssl_cafile='/path/to/ca-cert',
     ssl_certfile='/path/to/client-cert.pem',
     ssl_keyfile='/path/to/client-key.pem'
 )
 ```
+
+Event Hubs does not accept client certificates: use Microsoft Entra ID (`SASL_SSL` + `OAUTHBEARER`, port 9093). Confluent Cloud clusters without mTLS use OAuth (`OAUTHBEARER`) or API keys (SASL/PLAIN over TLS).
 
 **Never use SASL/PLAIN** (plaintext passwords) in production.
 
@@ -380,24 +401,27 @@ Kafka ACLs control who can read/write to topics. Implement least-privilege acces
 **Kafka ACL Structure:**
 
 ```bash
+# BOOTSTRAP = broker list for your listener; admin.properties = TLS/SASL client settings
 # Grant read access to specific topic for consumer group
-kafka-acls --add \
+kafka-acls.sh --bootstrap-server "$BOOTSTRAP" --command-config admin.properties \
+  --add \
   --allow-principal User:spark-consumer \
   --operation Read \
   --topic user-events \
   --group spark-analytics
 
 # Grant write access to producer
-kafka-acls --add \
+kafka-acls.sh --bootstrap-server "$BOOTSTRAP" --command-config admin.properties \
+  --add \
   --allow-principal User:api-producer \
   --operation Write \
   --topic user-events
 
-# Deny all access by default (recommended)
-kafka-acls --add \
-  --deny-principal User:* \
-  --operation All \
-  --topic *
+# Default deny: do not add a DENY ACL for User:* - DENY beats every ALLOW
+# and locks out all clients. Enable an authorizer (KRaft: authorizer.class.name=
+# org.apache.kafka.metadata.authorizer.StandardAuthorizer) and keep
+# allow.everyone.if.no.acl.found=false (the Apache default). MSK sets it to true,
+# so override it in the MSK cluster configuration; principals without an ALLOW get nothing.
 ```
 
 **Best Practices:**
@@ -420,7 +444,9 @@ kafka-acls --add \
       "Action": [
         "kafka-cluster:Connect",
         "kafka-cluster:DescribeTopic",
-        "kafka-cluster:ReadData"
+        "kafka-cluster:ReadData",
+        "kafka-cluster:DescribeGroup",
+        "kafka-cluster:AlterGroup"
       ],
       "Resource": [
         "arn:aws:kafka:us-east-1:123456789012:cluster/production-kafka/*",
@@ -432,7 +458,9 @@ kafka-acls --add \
 }
 ```
 
-**Critical:** Without ACLs, any authenticated user can read/write any topic.
+For Spark Structured Streaming, set `.option("groupIdPrefix", "spark-analytics")` (or `kafka.group.id`) and use `group/production-kafka/*/spark-analytics*` so the IAM group resource matches.
+
+**Critical:** Pick the control that matches your auth method. With MSK IAM auth, Kafka ACLs are ignored: the IAM policy above is the only authorization layer, and nothing is allowed until a policy grants it. With mTLS or SASL/SCRAM, MSK sets `allow.everyone.if.no.acl.found=true` by default, so without ACLs any authenticated client can read/write any topic; set it to `false` and use the `kafka-acls` grants above.
 
 ### Encryption
 
@@ -441,11 +469,12 @@ kafka-acls --add \
 Enable TLS for all client-broker and broker-broker communication.
 
 ```bash
-# MSK: Enforce TLS
+# MSK: enforce TLS client-broker (not TLS_PLAINTEXT) and broker-to-broker
+# (fragment for aws kafka create-cluster; JSON values cannot contain comments)
 --encryption-info '{
   "EncryptionInTransit": {
-    "ClientBroker": "TLS",      # TLS only (not TLS_PLAINTEXT)
-    "InCluster": true            # Broker-to-broker encryption
+    "ClientBroker": "TLS",
+    "InCluster": true
   }
 }'
 ```
@@ -465,28 +494,7 @@ Enable KMS encryption for data stored on Kafka broker disks.
 
 **Field-Level Encryption (Application-Side):**
 
-For highly sensitive data (PII, PHI, PCI), encrypt specific fields before sending to Kafka.
-
-```python
-from aws_encryption_sdk import encrypt, decrypt
-import json
-
-# Encrypt sensitive fields before producing to Kafka
-def encrypt_sensitive_fields(event, kms_key_id):
-    event['ssn'] = encrypt(
-        source=event['ssn'],
-        key_ids=[kms_key_id]
-    )
-    return json.dumps(event)
-
-producer.send('user-events', encrypt_sensitive_fields(event, kms_key_id))
-```
-
-**Benefits:**
-
-- Even with Kafka access, sensitive data is encrypted
-- Encryption key separate from Kafka (KMS access required)
-- Meets compliance requirements (HIPAA, PCI-DSS)
+TLS protects the wire and KMS protects the disk; neither protects the payload from anyone holding a topic Read ACL. For PII, PHI and cardholder data, encrypt the sensitive fields in the producer before the record reaches Kafka, using a KMS key that Kafka principals cannot decrypt. The envelope-encryption code and the Spark UDF live in [Field-Level Encryption for PII/PHI](#field-level-encryption-for-piiphi).
 
 ### Network Isolation
 
@@ -496,36 +504,46 @@ Restrict Kafka broker access to authorized sources only.
 
 **Example Security Group (AWS MSK):**
 
-| Type     | Protocol | Port | Source           | Purpose                     |
-| -------- | -------- | ---- | ---------------- | --------------------------- |
-| Inbound  | TCP      | 9094 | sg-spark-cluster | Spark consumers (TLS + IAM) |
-| Inbound  | TCP      | 9094 | sg-api-servers   | API producers (TLS + IAM)   |
-| Inbound  | TCP      | 9094 | sg-bastion       | Admin access (maintenance)  |
-| Outbound | All      | All  | 0.0.0.0/0        | Allow outbound              |
+| Type     | Protocol | Port | Source           | Purpose                    |
+| -------- | -------- | ---- | ---------------- | -------------------------- |
+| Inbound  | TCP      | 9098 | sg-spark-cluster | Spark consumers (IAM)      |
+| Inbound  | TCP      | 9098 | sg-api-servers   | API producers (IAM)        |
+| Inbound  | TCP      | 9098 | sg-bastion       | Admin access (maintenance) |
+| Outbound | All      | All  | 0.0.0.0/0        | Allow outbound             |
 
 **Best Practices:**
 
 - Use security group IDs as sources (not CIDR ranges)
 - Never allow `0.0.0.0/0` inbound on Kafka ports
 - Separate security groups per environment (dev, staging, prod)
-- TLS ports only (9094 for IAM, 9093 for mTLS)
+- Encrypted client ports only: 9098 (IAM), 9094 (mTLS), 9096 (SASL/SCRAM); never 9092 (plaintext)
 
 **VPC Peering for Cross-VPC Access:**
 
 If Spark and Kafka are in different VPCs:
 
 ```bash
-# AWS: Create VPC peering connection
+# AWS: Create VPC peering connection (CIDRs must not overlap)
 aws ec2 create-vpc-peering-connection \
   --vpc-id vpc-kafka \
   --peer-vpc-id vpc-spark
 
-# Update route tables to allow traffic
+# Accepter VPC owner must accept it
+aws ec2 accept-vpc-peering-connection \
+  --vpc-peering-connection-id pcx-abc123
+
+# Routes in BOTH VPCs
 aws ec2 create-route \
   --route-table-id rtb-spark \
   --destination-cidr-block 10.0.0.0/16 \
   --vpc-peering-connection-id pcx-abc123
+aws ec2 create-route \
+  --route-table-id rtb-kafka \
+  --destination-cidr-block 10.1.0.0/16 \
+  --vpc-peering-connection-id pcx-abc123
 ```
+
+For MSK, prefer multi-VPC private connectivity (PrivateLink): no peering or route tables, overlapping CIDRs allowed, and it supports IAM auth across accounts.
 
 ## 6. Spark Security
 
@@ -550,16 +568,28 @@ aws iam create-role \
     }]
   }'
 
-# Attach policy for S3 access
-aws iam attach-role-policy \
+# Attach the least-privilege policy from "Spark Job Permissions" (section 9)
+aws iam put-role-policy \
   --role-name EMR-Spark-DataAccess \
-  --policy-arn arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess
+  --policy-name spark-data-access \
+  --policy-document file://spark-data-access.json
 
-# Launch EMR cluster with IAM role
+# EC2 needs an instance profile; create-role does not make one
+aws iam create-instance-profile --instance-profile-name EMR-Spark-DataAccess
+aws iam add-role-to-instance-profile \
+  --instance-profile-name EMR-Spark-DataAccess \
+  --role-name EMR-Spark-DataAccess
+
+# Launch EMR cluster (service role: AmazonEMRServicePolicy_v2 plus iam:PassRole
+# on EMR-Spark-DataAccess; tag subnet and security groups as that policy requires)
 aws emr create-cluster \
   --name "Spark Processing Cluster" \
-  --release-label emr-6.10.0 \
+  --release-label emr-7.14.0 \
   --applications Name=Spark \
+  --service-role EMR-Service-Role \
+  --instance-type m5.xlarge \
+  --instance-count 3 \
+  --tags for-use-with-amazon-emr-managed-policies=true \
   --ec2-attributes '{
     "InstanceProfile": "EMR-Spark-DataAccess",
     "SubnetId": "subnet-private-1"
@@ -569,22 +599,32 @@ aws emr create-cluster \
 **Spark Configuration (No Access Keys):**
 
 ```python
-# Spark automatically uses IAM role - no credentials needed
+from pyspark.sql import SparkSession
+
+# Spark automatically uses the instance/pod IAM role - no credentials needed.
+# On EMR the native s3:// connector needs no config; for s3a:// the default
+# chain already includes IAMInstanceCredentialsProvider. Pin it only if you
+# want to forbid env-var/static keys (SDK v1 class names are deprecated):
 spark = SparkSession.builder \
     .appName("SecureSparkJob") \
     .config("spark.hadoop.fs.s3a.aws.credentials.provider",
-            "com.amazonaws.auth.InstanceProfileCredentialsProvider") \
+            "org.apache.hadoop.fs.s3a.auth.IAMInstanceCredentialsProvider") \
     .getOrCreate()
 
 # Read from S3 (IAM role provides access)
 df = spark.read.parquet("s3a://data-bucket/events/")
 ```
 
-**GCP Dataproc with Workload Identity:**
+**GCP Dataproc with a Dedicated VM Service Account:**
 
 ```bash
-# Grant service account access to GCS
+# Required for any custom Dataproc VM service account
 gcloud projects add-iam-policy-binding PROJECT_ID \
+  --member="serviceAccount:spark-sa@PROJECT_ID.iam.gserviceaccount.com" \
+  --role="roles/dataproc.worker"
+
+# Read access to the input bucket only, not every bucket in the project
+gcloud storage buckets add-iam-policy-binding gs://input-data-bucket \
   --member="serviceAccount:spark-sa@PROJECT_ID.iam.gserviceaccount.com" \
   --role="roles/storage.objectViewer"
 
@@ -594,13 +634,18 @@ gcloud dataproc clusters create spark-cluster \
   --service-account=spark-sa@PROJECT_ID.iam.gserviceaccount.com
 ```
 
-**Databricks with Instance Profiles:**
+**Databricks with Unity Catalog:**
 
-```python
-# Configure Databricks cluster with instance profile
-# In Databricks UI: Cluster → Advanced Options → Instance Profile
-# Select IAM role: arn:aws:iam::123456789012:instance-profile/databricks-spark-role
+```sql
+-- Storage credential (IAM role) registered once in Catalog Explorer; access is granted per path
+CREATE EXTERNAL LOCATION events_raw
+  URL 's3://data-bucket/events/'
+  WITH (STORAGE CREDENTIAL spark_data_role);
+
+GRANT READ FILES ON EXTERNAL LOCATION events_raw TO `spark-jobs`;
 ```
+
+Databricks documents instance profiles as a legacy data access pattern; keep them only for workspaces not yet on Unity Catalog.
 
 **Kerberos Authentication (Self-Managed Clusters):**
 
@@ -618,7 +663,7 @@ spark-submit \
 
 **Never use hardcoded access keys or passwords in Spark configuration.**
 
-### Encryption
+### Spark Encryption
 
 **Encryption at Rest:**
 
@@ -633,29 +678,32 @@ spark = SparkSession.builder \
     .getOrCreate()
 ```
 
-**Encryption in Transit:**
+**Encryption in Transit (RPC and Shuffle):**
 
-Enable SSL/TLS for Spark component communication.
+`spark.network.crypto.*` encrypts driver-executor RPC and shuffle traffic, but only when RPC authentication (`spark.authenticate`) is also on. Set both at submit time (`--conf`) or in the EMR security configuration.
 
 ```python
+spark = SparkSession.builder \
+    .config("spark.authenticate", "true") \
+    .config("spark.network.crypto.enabled", "true") \
+    .config("spark.network.crypto.keyLength", "256") \
+    .getOrCreate()
+```
+
+**Web UI TLS:**
+
+`spark.ssl.*` secures the web UIs, not RPC (Spark 4.x adds a separate `spark.ssl.rpc.enabled`). Load keystore passwords from the secrets manager, never as literals.
+
+```python
+tls = get_secret('prod/spark/keystore')  # see Secrets Management Integration
+
 spark = SparkSession.builder \
     .config("spark.ssl.enabled", "true") \
     .config("spark.ssl.protocol", "TLSv1.2") \
     .config("spark.ssl.keyStore", "/path/to/keystore.jks") \
-    .config("spark.ssl.keyStorePassword", "keystore-password") \
+    .config("spark.ssl.keyStorePassword", tls['keystore_password']) \
     .config("spark.ssl.trustStore", "/path/to/truststore.jks") \
-    .config("spark.ssl.trustStorePassword", "truststore-password") \
-    .getOrCreate()
-```
-
-**Shuffle Encryption:**
-
-Encrypt data shuffled between Spark executors.
-
-```python
-spark = SparkSession.builder \
-    .config("spark.network.crypto.enabled", "true") \
-    .config("spark.network.crypto.keyLength", "256") \
+    .config("spark.ssl.trustStorePassword", tls['truststore_password']) \
     .getOrCreate()
 ```
 
@@ -663,13 +711,14 @@ spark = SparkSession.builder \
 
 **Security Groups for Spark Clusters:**
 
-| Type     | Protocol | Port      | Source           | Purpose                     |
-| -------- | -------- | --------- | ---------------- | --------------------------- |
-| Inbound  | TCP      | 7077      | sg-spark-cluster | Spark master-worker         |
-| Inbound  | TCP      | 7000-7100 | sg-spark-cluster | Block manager               |
-| Inbound  | TCP      | 4040      | sg-bastion       | Spark UI (admin only)       |
-| Inbound  | TCP      | 18080     | sg-bastion       | History server (admin only) |
-| Outbound | All      | All       | 0.0.0.0/0        | Allow outbound              |
+| Type     | Protocol | Port          | Source           | Purpose                                      |
+| -------- | -------- | ------------- | ---------------- | -------------------------------------------- |
+| Inbound  | TCP      | All (0-65535) | sg-spark-cluster | Driver, executors, shuffle (7077 standalone) |
+| Inbound  | TCP      | 4040          | sg-bastion       | Spark UI (admin only)                        |
+| Inbound  | TCP      | 18080         | sg-bastion       | History server (admin only)                  |
+| Outbound | All      | All           | 0.0.0.0/0        | Allow outbound                               |
+
+`spark.driver.port` and `spark.blockManager.port` are random by default: allow all TCP from the cluster's own security group, or pin both ports and open only those. EMR's managed security groups already allow intra-cluster traffic; on Dataproc, add a firewall rule allowing ingress from the cluster's own subnet or network tag.
 
 **Critical:** Never expose Spark UI (4040) or History Server (18080) to the internet. Access via VPN or bastion host only.
 
@@ -726,25 +775,41 @@ Encrypt sensitive fields (SSN, credit card, health records) before storing in Ka
 ```python
 from aws_encryption_sdk import EncryptionSDKClient, StrictAwsKmsMasterKeyProvider
 
-# Initialize encryption client
 kms_key_id = 'arn:aws:kms:us-east-1:123456789012:key/abc-123'
-client = EncryptionSDKClient()
-kms_provider = StrictAwsKmsMasterKeyProvider(key_ids=[kms_key_id])
+_client = None
+_cmm = None
+
+
+def _get_client():
+    # Created once per executor process, never pickled from the driver.
+    # Data key caching keeps this at a handful of KMS calls instead of one per row.
+    global _client, _cmm
+    if _client is None:
+        from aws_encryption_sdk import (
+            CachingCryptoMaterialsManager,
+            LocalCryptoMaterialsCache,
+        )
+        _client = EncryptionSDKClient()
+        provider = StrictAwsKmsMasterKeyProvider(key_ids=[kms_key_id])
+        _cmm = CachingCryptoMaterialsManager(
+            master_key_provider=provider,
+            cache=LocalCryptoMaterialsCache(capacity=100),
+            max_age=300.0,          # seconds
+            max_messages_encrypted=10000,
+        )
+    return _client, _cmm
+
 
 # Encrypt sensitive field
 def encrypt_field(plaintext):
-    ciphertext, _ = client.encrypt(
-        source=plaintext,
-        key_provider=kms_provider
-    )
+    client, cmm = _get_client()
+    ciphertext, _ = client.encrypt(source=plaintext, materials_manager=cmm)
     return ciphertext
 
 # Decrypt when needed (requires KMS permissions)
 def decrypt_field(ciphertext):
-    plaintext, _ = client.decrypt(
-        source=ciphertext,
-        key_provider=kms_provider
-    )
+    client, cmm = _get_client()
+    plaintext, _ = client.decrypt(source=ciphertext, materials_manager=cmm)
     return plaintext
 
 # Usage in Spark job
@@ -761,7 +826,7 @@ df = df.withColumn("ssn_encrypted", encrypt_udf(df.ssn)) \
 
 - Even with S3/Kafka access, data is encrypted
 - Decryption requires separate KMS permissions
-- Meets HIPAA, PCI-DSS, GDPR encryption requirements
+- Supports HIPAA, PCI-DSS and GDPR encryption controls (with KMS key management; none of them mandates field-level encryption specifically)
 
 ### Data Masking & Tokenization
 
@@ -770,10 +835,20 @@ Mask sensitive data for non-production environments or analytics.
 **Data Masking (Spark SQL):**
 
 ```python
-from pyspark.sql.functions import sha2, concat, lit
+from pyspark.sql.functions import concat, lit
 
-# Hash email addresses for analytics (irreversible)
-df = df.withColumn("email_hash", sha2(df.email, 256))
+# Keyed hash (HMAC) for joinable pseudonyms. A plain SHA-256 of an email is
+# reversible by hashing candidate addresses, so the key lives in Secrets Manager
+import hmac, hashlib
+from pyspark.sql.functions import udf
+from pyspark.sql.types import StringType
+
+hmac_key = get_secret('prod/spark/pseudonym-key')['key'].encode()
+email_hmac = udf(
+    lambda v: hmac.new(hmac_key, v.encode(), hashlib.sha256).hexdigest() if v else None,
+    StringType(),
+)
+df = df.withColumn("email_hash", email_hmac(df.email))
 
 # Mask credit card (show last 4 digits only)
 df = df.withColumn("cc_masked",
@@ -782,24 +857,53 @@ df = df.withColumn("cc_masked",
 
 # Redact SSN completely
 df = df.withColumn("ssn_redacted", lit("***-**-****"))
+
+# Drop the originals, or the "masked" dataset still carries full PAN, SSN and email
+df = df.drop("credit_card", "ssn", "email")
 ```
 
 **Tokenization (Reversible):**
 
 For cases where you need to re-identify data later:
 
+Do not tokenize inside a UDF with an in-memory dict: every executor gets its own copy, tokens differ per partition and per run, and the mapping is lost when the job ends. Keep the vault as a table and join against it.
+
 ```python
-# Store mapping in separate encrypted table
-token_map = {}
+import hmac, hashlib
+from pyspark.sql.functions import col, udf
 
-def tokenize(value):
-    if value not in token_map:
-        token_map[value] = generate_random_token()
-    return token_map[value]
+# Token vault: (ssn, token) in a separate, KMS-encrypted table with its own IAM policy
+def read_vault():
+    return spark.read.format("jdbc").options(**vault_jdbc_opts).load()  # columns: ssn, token
 
-tokenize_udf = udf(tokenize, StringType())
-df = df.withColumn("ssn_token", tokenize_udf(df.ssn))
+_token_key = None
+
+
+@udf("string")
+def ssn_token(ssn):
+    # Deterministic HMAC token. The key is fetched on the executor, so it never
+    # appears in the query plan, the Spark UI or the event logs (a lit() would)
+    global _token_key
+    if _token_key is None:
+        _token_key = get_secret('prod/spark/token-key')['key'].encode()
+    return hmac.new(_token_key, ssn.encode(), hashlib.sha256).hexdigest() if ssn else None
+
+
+# Tokens for SSNs not yet in the vault
+new_tokens = (
+    df.select("ssn").where(col("ssn").isNotNull()).distinct()
+      .join(read_vault(), "ssn", "left_anti")
+      .withColumn("token", ssn_token(col("ssn")))
+)
+new_tokens.write.format("jdbc").options(**vault_jdbc_opts).mode("append").save()
+
+# Re-read the vault (now including the new tokens), swap SSN for its token, drop plaintext
+df = df.join(read_vault(), "ssn", "left") \
+       .withColumnRenamed("token", "ssn_token") \
+       .drop("ssn")
 ```
+
+Managed alternatives: AWS Glue DataBrew PII transforms (DETERMINISTIC_ENCRYPT), Google Cloud Sensitive Data Protection (formerly Cloud DLP) deterministic encryption, or a vault product (Skyflow, Basis Theory).
 
 **Multi-Tenant Data Isolation:**
 
@@ -807,11 +911,13 @@ For SaaS platforms processing data from multiple customers in shared pipelines, 
 
 **Critical tenant_id requirements:**
 
-- **Kafka topics**: Include tenant_id in message key for partition isolation
+- **Kafka topics**: Key messages by tenant_id for per-tenant ordering, but a key is not an access boundary: Kafka ACLs stop at the topic, so any consumer of a shared topic reads every tenant. Use per-tenant topics with prefixed ACLs when tenants need hard isolation
 - **Spark processing**: Always include tenant_id in JOIN conditions and GROUP BY clauses
 - **Storage**: Write to tenant-specific S3 prefixes or separate tables
 
 ```python
+from pyspark.sql.functions import col
+
 # VULNERABLE - joins without tenant_id boundary
 orders = spark.read.parquet("s3://data/orders/")
 customers = spark.read.parquet("s3://data/customers/")
@@ -842,12 +948,12 @@ The vulnerability occurs when joins or aggregations use shared identifiers (user
 
 **Kafka Audit Logging:**
 
-Enable broker audit logs to track topic access.
+Enable broker and authorizer logs. Kafka has no per-message access log, so these record connections and authorization decisions, not every read.
 
 ```bash
-# MSK: Enable CloudWatch Logs for broker logs
+# MSK: deliver broker and authorizer logs to CloudWatch Logs
 aws kafka update-monitoring \
-  --cluster-arn arn:aws:kafka:us-east-1:123456789012:cluster/production-kafka \
+  --cluster-arn arn:aws:kafka:us-east-1:123456789012:cluster/production-kafka/abcd1234-ab12-cd34-ef56-abcdef123456-2 \
   --current-version K1X5R2ABCDEFGH \
   --logging-info '{
     "BrokerLogs": {
@@ -855,16 +961,22 @@ aws kafka update-monitoring \
         "Enabled": true,
         "LogGroup": "/aws/msk/production-kafka"
       }
+    },
+    "AuthorizerLogs": {
+      "CloudWatchLogs": {
+        "Enabled": true,
+        "LogGroup": "/aws/msk/production-kafka-authorizer"
+      }
     }
   }'
 ```
 
 **What Gets Logged:**
 
-- Client connections (IP addresses, principals)
-- Topic access (reads, writes)
-- ACL changes
-- Authentication failures
+- Broker logs (INFO): client connections, authentication failures, broker errors
+- Authorizer logs: authorization decisions, including denied topic and group access
+- CloudTrail (IAM access control only): MSK API calls and topic admin actions (`CreateTopic`, `AlterTopic`, `DeleteTopic`, config changes)
+- Not logged: individual reads and writes. For PHI access trails, log in the consuming application
 
 **Spark Audit Logging:**
 
@@ -874,9 +986,10 @@ Enable event logging for Spark jobs.
 spark = SparkSession.builder \
     .config("spark.eventLog.enabled", "true") \
     .config("spark.eventLog.dir", "s3a://audit-logs/spark-events/") \
-    .config("spark.history.fs.logDirectory", "s3a://audit-logs/spark-events/") \
     .getOrCreate()
 ```
+
+Point the History Server at the same path with `spark.history.fs.logDirectory` in its own `spark-defaults.conf` (it is a daemon setting, not a job setting).
 
 **What Gets Logged:**
 
@@ -894,23 +1007,23 @@ Send logs to centralized SIEM (Splunk, ELK, cloud logging) for correlation and a
 **GDPR (General Data Protection Regulation):**
 
 - Right to deletion (delete user data from Kafka topics, S3, warehouses)
-- Data residency (store data in EU regions only)
-- Breach notification (72 hours)
-- Encryption required (field-level encryption for PII)
+- Transfer rules (data may leave the EEA only under Chapter V safeguards such as adequacy decisions or SCCs; EU-only regions simplify this but are not mandated)
+- Breach notification (to the supervisory authority within 72 hours of becoming aware, Art. 33)
+- Security of processing (Art. 32 names encryption and pseudonymisation as appropriate measures; field-level encryption for PII is a strong way to meet it)
 
 **HIPAA (Health Insurance Portability and Accountability Act):**
 
 - PHI encryption (field-level encryption with KMS)
-- Access logging (track all PHI access)
+- Access logging (track all PHI access; Kafka does not log individual reads, so log it in the consuming application)
 - BAA with cloud provider (Business Associate Agreement)
-- 6-year retention for medical records (S3 lifecycle policies)
+- 6-year retention for HIPAA Security Rule documentation (policies, risk assessments, audit records; 45 CFR 164.316(b)(2)(i); enforce with S3 lifecycle policies); medical-record retention comes from state law
 
 **PCI-DSS (Payment Card Industry Data Security Standard):**
 
 - Cardholder data encryption (field-level, never store CVV)
 - Access restrictions (least privilege ACLs)
-- Quarterly key rotation (rotate KMS keys)
-- Network segmentation (separate Kafka topics for payment data)
+- Key rotation at the end of each key's documented cryptoperiod (v4.0.1 Req 3.7.4, per industry guidance such as NIST SP 800-57; no "quarterly" rule). Yearly automatic KMS rotation is a sensible default, not a PCI mandate; AWS KMS rotation is configurable from 90 to 2,560 days, plus on-demand
+- Network segmentation (isolate the cardholder data environment: a dedicated Kafka cluster and Spark jobs for payment data; separate topics on a shared cluster put the whole cluster in PCI scope)
 
 **CCPA (California Consumer Privacy Act):**
 
@@ -926,46 +1039,66 @@ Schema Registry stores Avro/Protobuf/JSON schemas for Kafka topics. Secure it to
 
 **Confluent Schema Registry with Authentication:**
 
-```bash
-# Enable authentication (basic auth or mTLS)
+```properties
+# Enable authentication (basic auth or mTLS); inject the password at runtime, never commit it
 schema.registry.url=https://schema-registry.kafka.svc.cluster.local:8081
-schema.registry.basic.auth.credentials.source=USER_INFO
-schema.registry.basic.auth.user.info=spark-consumer:password
+basic.auth.credentials.source=USER_INFO
+basic.auth.user.info=spark-consumer:<password-from-secrets-manager>
 ```
 
 **Schema Registry ACLs:**
 
+`kafka-acls` does not cover Schema Registry. On Confluent Platform, subject ACLs come from the Schema Registry Security Plugin (`sr-acl-cli`, a commercial component); Confluent Cloud uses RBAC role bindings.
+
 ```bash
 # Grant read access to consumers
-kafka-acls --add \
-  --allow-principal User:spark-consumer \
-  --operation Read \
-  --resource-type Subject \
-  --resource-name user-events-value
+sr-acl-cli --config schema-registry.properties --add \
+  -s user-events-value -p spark-consumer -o SUBJECT_READ
 
-# Grant write access to producers only
-kafka-acls --add \
-  --allow-principal User:api-producer \
-  --operation Write \
-  --resource-type Subject \
-  --resource-name user-events-value
+# Grant write access to the CI principal that registers schemas
+sr-acl-cli --config schema-registry.properties --add \
+  -s user-events-value -p schema-ci -o SUBJECT_WRITE
 ```
 
-**AWS MSK Schema Registry (Native):**
+Set `auto.register.schemas=false` on producers so applications can only use schemas that CI registered. AWS Glue Schema Registry is authorized with IAM instead: grant `glue:CreateSchema` and `glue:RegisterSchemaVersion` only to the CI role, `glue:GetSchemaByDefinition` to producers and `glue:GetSchemaVersion` to consumers.
+
+**AWS Glue Schema Registry (used with MSK):**
+
+AWS's official Glue Schema Registry SerDes are Java (plus a C# port); for Python use the community `aws-glue-schema-registry` package (IAM-authenticated through boto3, so no registry password to manage).
 
 ```python
+import boto3
+from kafka import KafkaProducer
+try:
+    from kafka.net.sasl.oauth import AbstractTokenProvider  # kafka-python 3.x
+except ImportError:
+    from kafka.sasl.oauth import AbstractTokenProvider  # kafka-python 2.1-2.3
+from aws_msk_iam_sasl_signer import MSKAuthTokenProvider
 from aws_schema_registry import SchemaRegistryClient
+from aws_schema_registry.adapter.kafka import KafkaSerializer
+from aws_schema_registry.avro import AvroSchema
 
-# Producer with schema registry
-registry_client = SchemaRegistryClient(
-    region_name='us-east-1',
-    registry_name='production-schemas'
-)
+
+class MSKTokenProvider(AbstractTokenProvider):
+    def token(self):
+        token, _ = MSKAuthTokenProvider.generate_auth_token('us-east-1')
+        return token
+
+
+glue = boto3.client('glue', region_name='us-east-1')
+registry_client = SchemaRegistryClient(glue, registry_name='production-schemas')
 
 producer = KafkaProducer(
     bootstrap_servers=['b-1.kafka.amazonaws.com:9098'],
-    value_serializer=lambda v: registry_client.serialize(v, 'user-events')
+    security_protocol='SASL_SSL',
+    sasl_mechanism='OAUTHBEARER',
+    sasl_oauth_token_provider=MSKTokenProvider(),
+    value_serializer=KafkaSerializer(registry_client),
 )
+
+with open('user_event.avsc') as f:
+    schema = AvroSchema(f.read())
+producer.send('user-events', value=(event, schema))  # value must be a (data, schema) tuple
 ```
 
 ### Schema Validation
@@ -975,10 +1108,13 @@ Validate data against schemas before producing to Kafka to prevent malformed dat
 **Producer-Side Validation:**
 
 ```python
-from confluent_kafka import avro
+from confluent_kafka import Producer
+from confluent_kafka.schema_registry import SchemaRegistryClient
+from confluent_kafka.schema_registry.avro import AvroSerializer
+from confluent_kafka.serialization import MessageField, SerializationContext
 
 # Define Avro schema
-value_schema = avro.loads('''
+value_schema_str = '''
 {
   "type": "record",
   "name": "UserEvent",
@@ -988,26 +1124,50 @@ value_schema = avro.loads('''
     {"name": "timestamp", "type": "long"}
   ]
 }
-''')
+'''
 
-# Producer validates against schema
-producer = AvroProducer({
-    'bootstrap.servers': 'kafka:9092',
-    'schema.registry.url': 'http://schema-registry:8081'
-}, default_value_schema=value_schema)
+registry = SchemaRegistryClient({
+    'url': 'https://schema-registry:8081',
+    'basic.auth.user.info': f"{sr_user}:{sr_password}",  # from Secrets Manager
+})
+serialize = AvroSerializer(registry, value_schema_str, conf={'auto.register.schemas': False})
+
+producer = Producer({
+    'bootstrap.servers': 'kafka:9094',
+    'security.protocol': 'SSL',
+})
+
+# Serializer validates the record against the schema before it leaves the producer
+producer.produce(
+    'user-events',
+    value=serialize(event, SerializationContext('user-events', MessageField.VALUE)),
+)
 ```
+
+`confluent_kafka.avro.AvroProducer` is deprecated and `SerializingProducer` is experimental; call the serializers directly as above.
 
 **Consumer-Side Validation:**
 
 ```python
-# Spark validates schema on read
+from pyspark.sql.functions import from_json
+from pyspark.sql.types import StructType, StructField, StringType, LongType
+
+expected_schema = StructType([
+    StructField("user_id", StringType(), nullable=False),
+    StructField("event_type", StringType(), nullable=False),
+    StructField("timestamp", LongType(), nullable=False),
+])
+
+# from_json silently returns nulls for bad records in its default PERMISSIVE mode;
+# FAILFAST makes schema violations fail the batch instead of leaking through
 df = spark.read \
     .format("kafka") \
-    .option("kafka.bootstrap.servers", "kafka:9092") \
+    .option("kafka.bootstrap.servers", "kafka:9094") \
+    .option("kafka.security.protocol", "SSL") \
     .option("subscribe", "user-events") \
     .load() \
     .selectExpr("CAST(value AS STRING) as json") \
-    .select(from_json("json", expected_schema).alias("data")) \
+    .select(from_json("json", expected_schema, {"mode": "FAILFAST"}).alias("data")) \
     .select("data.*")
 ```
 
@@ -1024,25 +1184,29 @@ Use schema evolution rules to prevent breaking changes.
 
 **Example: Add Optional Field (Backward Compatible):**
 
+**Old schema:**
+
 ```json
-// Old schema
 {
   "type": "record",
   "name": "UserEvent",
   "fields": [
-    {"name": "user_id", "type": "string"},
-    {"name": "event_type", "type": "string"}
+    { "name": "user_id", "type": "string" },
+    { "name": "event_type", "type": "string" }
   ]
 }
+```
 
-// New schema (backward compatible)
+**New schema (backward compatible; the added field is optional with a default):**
+
+```json
 {
   "type": "record",
   "name": "UserEvent",
   "fields": [
-    {"name": "user_id", "type": "string"},
-    {"name": "event_type", "type": "string"},
-    {"name": "metadata", "type": ["null", "string"], "default": null}  // Optional
+    { "name": "user_id", "type": "string" },
+    { "name": "event_type", "type": "string" },
+    { "name": "metadata", "type": ["null", "string"], "default": null }
   ]
 }
 ```
@@ -1050,8 +1214,9 @@ Use schema evolution rules to prevent breaking changes.
 **Set Compatibility Mode:**
 
 ```bash
-# Set BACKWARD compatibility for all schemas
-curl -X PUT http://schema-registry:8081/config \
+# Set BACKWARD compatibility for all schemas (admin credentials, over TLS)
+curl -X PUT https://schema-registry:8081/config \
+  -u "$SR_ADMIN_USER:$SR_ADMIN_PASSWORD" \
   -H "Content-Type: application/json" \
   -d '{"compatibility": "BACKWARD"}'
 ```
@@ -1060,40 +1225,38 @@ curl -X PUT http://schema-registry:8081/config \
 
 ### Kafka Topic ACLs
 
-Implement least-privilege access per topic and consumer group.
+Implement least-privilege access per topic and consumer group. ACL mechanics and the cluster-wide default-deny setting live in [Authorization (ACLs)](#authorization-acls); this section shows the per-application layout.
 
 **Example ACL Structure:**
 
 ```bash
 # Producers (write-only to specific topics)
-kafka-acls --add \
+kafka-acls.sh --bootstrap-server "$BOOTSTRAP" --command-config admin.properties \
+  --add \
   --allow-principal User:api-producer \
   --operation Write \
   --topic user-events
 
-kafka-acls --add \
+kafka-acls.sh --bootstrap-server "$BOOTSTRAP" --command-config admin.properties \
+  --add \
   --allow-principal User:cdc-connector \
   --operation Write \
   --topic database-changes
 
 # Consumers (read-only from specific topics)
-kafka-acls --add \
+kafka-acls.sh --bootstrap-server "$BOOTSTRAP" --command-config admin.properties \
+  --add \
   --allow-principal User:spark-analytics \
   --operation Read \
   --topic user-events \
   --group spark-consumer-group
 
-kafka-acls --add \
+kafka-acls.sh --bootstrap-server "$BOOTSTRAP" --command-config admin.properties \
+  --add \
   --allow-principal User:ml-pipeline \
   --operation Read \
   --topic user-events \
   --group ml-feature-extraction
-
-# Deny all by default
-kafka-acls --add \
-  --deny-principal User:* \
-  --operation All \
-  --topic *
 ```
 
 **Best Practices:**
@@ -1124,7 +1287,18 @@ Grant Spark jobs minimum required permissions for data access.
     },
     {
       "Effect": "Allow",
-      "Action": ["s3:PutObject", "s3:DeleteObject"],
+      "Action": ["s3:ListBucket", "s3:ListBucketMultipartUploads"],
+      "Resource": ["arn:aws:s3:::output-data-bucket"]
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:PutObject",
+        "s3:DeleteObject",
+        "s3:AbortMultipartUpload",
+        "s3:ListMultipartUploadParts"
+      ],
       "Resource": ["arn:aws:s3:::output-data-bucket/spark-output/*"]
     },
     {
@@ -1136,8 +1310,10 @@ Grant Spark jobs minimum required permissions for data access.
     },
     {
       "Effect": "Allow",
-      "Action": ["kms:Decrypt", "kms:DescribeKey"],
-      "Resource": ["arn:aws:kms:us-east-1:123456789012:key/data-encryption-key"]
+      "Action": ["kms:Decrypt", "kms:GenerateDataKey", "kms:DescribeKey"],
+      "Resource": [
+        "arn:aws:kms:us-east-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab"
+      ]
     }
   ]
 }
@@ -1170,7 +1346,7 @@ For multi-account architectures (dev/staging/prod in separate accounts):
     {
       "Effect": "Allow",
       "Principal": {
-        "AWS": "arn:aws:iam::SPARK-ACCOUNT-ID:role/EMR-Spark-Role"
+        "AWS": "arn:aws:iam::SPARK-ACCOUNT-ID:role/EMR-Spark-DataAccess"
       },
       "Action": ["s3:GetObject", "s3:ListBucket"],
       "Resource": [
@@ -1184,42 +1360,54 @@ For multi-account architectures (dev/staging/prod in separate accounts):
 
 **Spark Configuration for Cross-Account:**
 
-```python
-# Assume role in different account
-spark = SparkSession.builder \
-    .config("spark.hadoop.fs.s3a.assumed.role.arn",
-            "arn:aws:iam::DATA-ACCOUNT-ID:role/DataLakeAccess") \
-    .config("spark.hadoop.fs.s3a.assumed.role.session.name", "spark-session") \
-    .getOrCreate()
+With the bucket policy above, `EMR-Spark-DataAccess` reads the bucket directly. Grant the same `s3:GetObject`/`s3:ListBucket` on `central-data-lake` in that role's own IAM policy too (cross-account access needs both), and no extra Spark config is needed:
 
+```python
+spark = SparkSession.builder.getOrCreate()
 df = spark.read.parquet("s3a://central-data-lake/events/")
 ```
 
+Do not set `fs.s3a.assumed.role.arn` on its own: S3A ignores it unless `fs.s3a.aws.credentials.provider` is `org.apache.hadoop.fs.s3a.auth.AssumedRoleCredentialProvider`, and that provider authenticates to STS with long-lived keys (`fs.s3a.assumed.role.credentials.provider`, default `fs.s3a.access.key`/`secret.key`; Hadoop documents that EC2 instance credentials cannot be used), which is a poor fit for EMR. If the data account must expose a role to assume instead (`DataLakeAccess` trusting `EMR-Spark-DataAccess`, which needs `sts:AssumeRole` on it), use EMRFS role mappings in the EMR security configuration or S3 Access Grants.
+
 ### Workload Identity Patterns
 
-**AWS IRSA (IAM Roles for Service Accounts) - Kubernetes:**
+**AWS EKS Pod Identity - Kubernetes:**
 
-If running Spark on Kubernetes:
+If running Spark on EKS, bind the driver's service account to an IAM role with EKS Pod Identity (AWS's recommended mechanism; no OIDC provider or ServiceAccount annotation, but the Spark image needs an AWS SDK recent enough to support it). The role trusts `pods.eks.amazonaws.com` with `sts:AssumeRole` and `sts:TagSession`, and the cluster needs the `eks-pod-identity-agent` add-on. Keep IRSA (the `eks.amazonaws.com/role-arn` annotation) for non-EKS clusters.
+
+```bash
+aws eks create-pod-identity-association \
+  --cluster-name production-eks \
+  --namespace default \
+  --service-account spark-driver \
+  --role-arn arn:aws:iam::123456789012:role/SparkDriverRole
+```
 
 ```yaml
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: spark-driver
-  annotations:
-    eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/SparkDriverRole
 
 ---
-apiVersion: spark.apache.org/v1beta2
+apiVersion: sparkoperator.k8s.io/v1beta2
 kind: SparkApplication
 metadata:
   name: spark-job
 spec:
+  type: Python
+  mode: cluster
+  sparkVersion: "3.5.8"
+  image: registry.example.com/spark-job:1.0.0
+  mainApplicationFile: local:///opt/app/spark-job.py
   driver:
     serviceAccount: spark-driver
+  executor:
+    instances: 2
+    serviceAccount: spark-driver # executors read S3 too
 ```
 
-**GCP Workload Identity:**
+**GCP Workload Identity Federation for GKE:**
 
 ```bash
 # Bind Kubernetes service account to GCP service account
@@ -1227,7 +1415,14 @@ gcloud iam service-accounts add-iam-policy-binding \
   spark-sa@PROJECT_ID.iam.gserviceaccount.com \
   --role roles/iam.workloadIdentityUser \
   --member "serviceAccount:PROJECT_ID.svc.id.goog[default/spark-driver]"
+
+# Required: annotate the Kubernetes ServiceAccount
+kubectl annotate serviceaccount spark-driver \
+  --namespace default \
+  iam.gke.io/gcp-service-account=spark-sa@PROJECT_ID.iam.gserviceaccount.com
 ```
+
+Simpler: grant roles directly to the Kubernetes ServiceAccount principal (`principal://iam.googleapis.com/projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/PROJECT_ID.svc.id.goog/subject/ns/default/sa/spark-driver`); no Google service account or annotation needed.
 
 ## 10. Monitoring & Observability
 
@@ -1250,18 +1445,19 @@ Monitor Kafka broker and topic health for performance and security issues.
 
 **Security Metrics:**
 
-- `kafka.server:type=BrokerTopicMetrics,name=FailedFetchRequestsPerSec` - Unauthorized read attempts
-- `kafka.server:type=BrokerTopicMetrics,name=FailedProduceRequestsPerSec` - Unauthorized write attempts
+- `kafka.server:type=socket-server-metrics,listener=*,networkProcessor=*` attribute `failed-authentication-rate` - Failed authentication attempts
 - `kafka.network:type=RequestMetrics,name=RequestsPerSec,request=SaslAuthenticate` - Authentication attempts
+- ACL denials have no broker metric: `FailedFetchRequestsPerSec` and `FailedProduceRequestsPerSec` count unexpected broker errors, and authorization failures never reach them. Count denials from the authorizer log (`kafka.authorizer.logger`; MSK authorizer logs) instead (see Security Alerting)
 
 **CloudWatch Alarms (AWS MSK):**
 
 ```bash
 aws cloudwatch put-metric-alarm \
   --alarm-name kafka-high-consumer-lag \
-  --alarm-description "Alert when consumer lag exceeds 10000" \
-  --metric-name EstimatedMaxTimeLag \
+  --alarm-description "Alert when consumer lag exceeds 10000 messages" \
+  --metric-name SumOffsetLag \
   --namespace AWS/Kafka \
+  --dimensions '[{"Name":"Cluster Name","Value":"production-kafka"},{"Name":"Consumer Group","Value":"ml-feature-extraction"},{"Name":"Topic","Value":"user-events"}]' \
   --statistic Maximum \
   --period 300 \
   --evaluation-periods 2 \
@@ -1269,6 +1465,8 @@ aws cloudwatch put-metric-alarm \
   --comparison-operator GreaterThanThreshold \
   --alarm-actions arn:aws:sns:us-east-1:123456789012:kafka-alerts
 ```
+
+Spark Structured Streaming does not commit offsets to Kafka (they live in its checkpoint), so MSK emits no lag metrics for Spark consumers; alert on `inputRate-total` vs `processingRate-total` instead.
 
 ### Spark Metrics
 
@@ -1278,21 +1476,19 @@ Monitor Spark job performance and failures.
 
 **Job Metrics:**
 
-- `spark.job.duration` - Job execution time (alert if >10min for streaming jobs)
-- `spark.job.failedStages` - Failed stages (alert on any failure)
-- `spark.executor.failedTasks` - Task failures (alert if >5% failure rate)
+- `DAGScheduler.stage.failedStages` (driver) - Failed stages (alert on any increase)
+- `failedTasks` / `totalTasks` per executor (`/api/v1/applications/{id}/executors`) - Task failures (alert if >5%)
 
 **Resource Metrics:**
 
-- `spark.executor.memory.used` - Memory usage (alert at >80%)
-- `spark.executor.diskSpaceUsed` - Disk usage (alert at >90%)
-- `spark.executor.totalCores` - CPU utilization
+- `memoryUsed` / `maxMemory` per executor - Storage memory (alert at >80%)
+- `diskUsed` per executor - Disk used for cached blocks
 
-**Streaming Metrics:**
+**Streaming Metrics (Structured Streaming, requires `spark.sql.streaming.metricsEnabled=true`):**
 
-- `spark.streaming.receivers.recordsReceived` - Records ingested from Kafka
-- `spark.streaming.waitingBatches` - Backlog (alert if increasing)
-- `spark.streaming.processingDelay` - Processing lag (alert if >batch interval)
+- `inputRate-total` - Records ingested per second from Kafka
+- `processingRate-total` - Records processed per second (alert if below `inputRate-total`)
+- `latency` - Micro-batch duration (alert if > trigger interval)
 
 **Prometheus Integration:**
 
@@ -1309,7 +1505,7 @@ spark = SparkSession.builder \
 
 Use pre-built Spark dashboards:
 
-- [Spark Monitoring Dashboard](https://grafana.com/grafana/dashboards/12644)
+- [Apache Spark - Performance Metrics (Grafana dashboard 7890)](https://grafana.com/grafana/dashboards/7890-spark-performance-metrics/)
 - Custom queries for security events (failed auth, unauthorized access)
 
 ### Centralized Logging
@@ -1317,6 +1513,8 @@ Use pre-built Spark dashboards:
 Forward Kafka and Spark logs to centralized SIEM for security analysis.
 
 **Fluentd Configuration (Kubernetes):**
+
+For self-managed brokers only; MSK delivers broker logs to CloudWatch Logs, S3 or Firehose.
 
 ```yaml
 apiVersion: v1
@@ -1327,32 +1525,43 @@ data:
   fluent.conf: |
     <source>
       @type tail
-      path /var/log/kafka/*.log
-      pos_file /var/log/kafka.log.pos
+      path /var/log/kafka/server.log,/var/log/kafka/kafka-authorizer.log
+      pos_file /var/log/fluentd/kafka.log.pos
       tag kafka.*
-      format json
+      <parse>
+        @type regexp
+        expression /^\[(?<time>[^\]]+)\] (?<level>\w+) (?<message>.*)$/
+        time_format %Y-%m-%d %H:%M:%S,%L
+      </parse>
     </source>
 
     <match kafka.**>
       @type elasticsearch
       host elasticsearch.logging.svc.cluster.local
       port 9200
+      scheme https
+      ssl_verify true
+      user "#{ENV['ES_USER']}"
+      password "#{ENV['ES_PASSWORD']}"
       index_name kafka-logs
     </match>
 ```
 
 **CloudWatch Logs Insights Queries:**
 
-```sql
--- Failed authentication attempts
+Enable MSK **authorizer logs** (`AuthorizerLogs` in `--logging-info`, alongside `BrokerLogs`) so ACL decisions land in their own log group; broker logs only carry INFO-level application output. Logs Insights is not SQL: comments start with `#`, and fields such as principal/topic must be extracted with `parse`.
+
+```text
+# Failed authentication attempts (broker log group)
 fields @timestamp, @message
-| filter @message like /AuthenticationException/
+| filter @message like /AuthenticationException|Failed authentication/
 | stats count() by bin(5m)
 
--- Unauthorized topic access
-fields @timestamp, principal, topic
-| filter @message like /TOPIC_AUTHORIZATION_FAILED/
-| stats count() by principal, topic
+# Unauthorized topic access (authorizer log group)
+fields @timestamp, @message
+| filter @message like /Denied/
+| parse @message /Principal = (?<principal>[^ ]+) is Denied [Oo]peration = (?<operation>[^ ]+) .* on resource = (?<resource>[^ ]+)/
+| stats count() by principal, operation, resource
 ```
 
 ### Security Alerting
@@ -1370,12 +1579,22 @@ Configure alerts for security events.
 
 **Example Alert (CloudWatch Alarm):**
 
+MSK publishes no ACL-denial metric, so derive one from the authorizer log group.
+
 ```bash
+# Turn authorizer "is Denied" log lines into a custom metric
+aws logs put-metric-filter \
+  --log-group-name /aws/msk/production-kafka-authorizer \
+  --filter-name kafka-authz-denied \
+  --filter-pattern '"is Denied"' \
+  --metric-transformations \
+    metricName=KafkaAuthzDenied,metricNamespace=Security/Kafka,metricValue=1,defaultValue=0
+
 aws cloudwatch put-metric-alarm \
   --alarm-name kafka-unauthorized-access \
   --alarm-description "Alert on Kafka ACL denials" \
-  --metric-name FailedFetchRequestsPerSec \
-  --namespace AWS/Kafka \
+  --metric-name KafkaAuthzDenied \
+  --namespace Security/Kafka \
   --statistic Sum \
   --period 60 \
   --evaluation-periods 1 \
@@ -1391,12 +1610,12 @@ This guide's security controls prevent real-world data pipeline attacks.
 **Unauthorized Topic Access**
 
 - Attack: Compromised credentials used to read sensitive Kafka topics (PII, financial transactions)
-- Mitigated by: Kafka ACLs (topic-level permissions), IAM authentication (short-lived tokens), network isolation (private subnets), audit logging (track all access)
+- Mitigated by: Kafka ACLs (topic-level permissions), IAM authentication (short-lived tokens), network isolation (private subnets), audit logging (authentication failures and authorizer decisions; Kafka keeps no per-message read log)
 
 **Data Exfiltration via Spark Jobs**
 
 - Attack: Malicious Spark job reads entire dataset and writes to attacker-controlled S3 bucket
-- Mitigated by: IAM policies (write access to specific output paths only), network isolation (VPC endpoints), audit logging (track S3 writes), anomaly detection (alert on unusual data volume)
+- Mitigated by: IAM policies (write access to specific output paths only), an S3 VPC endpoint policy limited to your organization's buckets (`aws:ResourceOrgID`) with no general internet egress from Spark subnets, audit logging (track S3 writes), anomaly detection (alert on unusual data volume)
 
 **Man-in-the-Middle Attacks**
 
@@ -1406,7 +1625,7 @@ This guide's security controls prevent real-world data pipeline attacks.
 **Schema Poisoning**
 
 - Attack: Modified schema in Schema Registry causes data corruption or application crashes
-- Mitigated by: Schema Registry ACLs (write access for producers only), schema validation (compatibility checks), versioning (rollback to previous schema), audit logging
+- Mitigated by: Schema Registry ACLs (read-only for applications, write only for the CI principal), `auto.register.schemas=false` on producers, schema validation (compatibility checks), versioning (rollback to previous schema), audit logging
 
 **Credential Theft from Spark Jobs**
 
@@ -1416,7 +1635,7 @@ This guide's security controls prevent real-world data pipeline attacks.
 **Kafka Broker Compromise**
 
 - Attack: Attacker gains access to Kafka broker and reads all topic data
-- Mitigated by: Encryption at rest (KMS encryption on broker disks), field-level encryption (sensitive data encrypted before Kafka), network isolation (brokers not internet-accessible), multi-AZ deployment (limits blast radius)
+- Mitigated by: field-level encryption (sensitive fields stay ciphertext even on the broker), network isolation (brokers not internet-accessible), managed brokers (no shell access on MSK), audit logging. Disk encryption at rest does not help here: a running broker reads its volumes decrypted, and multi-AZ replicas carry the same data
 
 **Spark Cluster Takeover**
 
@@ -1436,7 +1655,7 @@ This guide's security controls prevent real-world data pipeline attacks.
 **Insider Threat (Platform Engineer with Full Access)**
 
 - Attack: Malicious insider with Kafka/Spark admin access exfiltrates data
-- Mitigated by: Field-level encryption (admin cannot decrypt without KMS access), audit logging (track all access), separation of duties (different teams for data platform vs security), break-glass procedures (emergency access only)
+- Mitigated by: Field-level encryption (admin cannot decrypt without KMS access), audit logging (CloudTrail records every KMS `Decrypt` and admin API call), separation of duties (different teams for data platform vs security), break-glass procedures (emergency access only)
 
 ## 12. References
 
@@ -1445,37 +1664,46 @@ This guide's security controls prevent real-world data pipeline attacks.
 - [Apache Kafka](https://kafka.apache.org/)
 - [Apache Spark](https://spark.apache.org/)
 - [Confluent Schema Registry](https://docs.confluent.io/platform/current/schema-registry/)
+- [Apache Kafka 4.0.0 Release Announcement](https://kafka.apache.org/blog/2025/03/18/apache-kafka-4.0.0-release-announcement/)
+- [Apache Kafka 3.9.0 Release Announcement (final ZooKeeper release)](https://kafka.apache.org/blog/2024/11/06/apache-kafka-3.9.0-release-announcement/)
 
 ### Managed Services
 
 - [AWS MSK (Managed Streaming for Kafka)](https://aws.amazon.com/msk/)
+- [Amazon MSK Pricing](https://aws.amazon.com/msk/pricing/)
+- [Amazon MSK Express brokers](https://docs.aws.amazon.com/msk/latest/developerguide/msk-broker-types-express.html)
 - [AWS EMR (Elastic MapReduce)](https://aws.amazon.com/emr/)
-- [GCP Dataproc](https://cloud.google.com/dataproc)
-- [Azure HDInsight](https://azure.microsoft.com/en-us/services/hdinsight/)
-- [Databricks](https://databricks.com/)
+- [GCP Managed Service for Apache Spark (formerly Dataproc)](https://cloud.google.com/products/managed-service-for-apache-spark)
+- [GCP Managed Service for Apache Kafka](https://docs.cloud.google.com/managed-service-for-apache-kafka/docs/overview)
+- [Azure HDInsight](https://azure.microsoft.com/en-us/products/hdinsight/)
+- [Databricks](https://www.databricks.com/)
 - [Confluent Cloud](https://www.confluent.io/confluent-cloud/)
 
 ### Security Tools
 
 - [TruffleHog](https://github.com/trufflesecurity/trufflehog)
 - [AWS Encryption SDK](https://docs.aws.amazon.com/encryption-sdk/)
-- [Google Tink](https://github.com/google/tink)
+- [Google Tink](https://github.com/tink-crypto/tink)
 
 ### Kafka Security
 
 - [Kafka Security Documentation](https://kafka.apache.org/documentation/#security)
 - [Confluent Security Best Practices](https://docs.confluent.io/platform/current/security/index.html)
-- [AWS MSK Security Best Practices](https://docs.aws.amazon.com/msk/latest/developerguide/security-best-practices.html)
+- [Security in Amazon MSK](https://docs.aws.amazon.com/msk/latest/developerguide/security.html)
 
 ### Spark Security
 
 - [Spark Security Documentation](https://spark.apache.org/docs/latest/security.html)
-- [Databricks Security Best Practices](https://docs.databricks.com/security/index.html)
+- [Databricks Security Best Practices](https://docs.databricks.com/aws/en/security)
 
 ### Standards & Compliance
 
-- [OWASP Top 10](https://owasp.org/www-project-top-ten/)
+- [OWASP Top 10](https://owasp.org/projects/top-ten)
 - [GDPR](https://gdpr.eu/)
 - [HIPAA Security Rule](https://www.hhs.gov/hipaa/for-professionals/security/index.html)
 - [PCI-DSS Requirements](https://www.pcisecuritystandards.org/)
 - [CCPA](https://oag.ca.gov/privacy/ccpa)
+
+### Incident Reports
+
+- [FTC revised complaint: Uber Technologies (2016 breach)](https://www.ftc.gov/system/files/documents/cases/152_3054_c-4662_uber_technologies_revised_complaint.pdf)

@@ -1,6 +1,6 @@
 # Database Security Guide
 
-**Last Updated:** January 29, 2026
+**Last Updated:** September 22, 2026
 
 A cloud-agnostic guide focused on securing production SQL databases (primarily PostgreSQL) with defense-in-depth security, high availability, and disaster recovery. Includes comparisons to NoSQL alternatives and guidance on when each is appropriate. This guide includes industry best practices and lessons learned from real-world implementations.
 
@@ -24,6 +24,7 @@ A cloud-agnostic guide focused on securing production SQL databases (primarily P
    - [Connection from Applications](#connection-from-applications)
 6. [Authentication & Access Control](#6-authentication--access-control)
    - [Least-Privilege Database Users](#least-privilege-database-users)
+   - [Row-Level Security for Multi-Tenant Data](#row-level-security-for-multi-tenant-data)
    - [IAM Database Authentication](#iam-database-authentication)
    - [Secrets Management](#secrets-management)
 7. [Encryption](#7-encryption)
@@ -32,6 +33,7 @@ A cloud-agnostic guide focused on securing production SQL databases (primarily P
    - [Encryption in Transit](#encryption-in-transit)
 8. [Performance & Scaling](#8-performance--scaling)
    - [Connection Pooling](#connection-pooling)
+   - [Query Timeouts for DoS Prevention](#query-timeouts-for-dos-prevention)
    - [Read/Write Splitting](#readwrite-splitting)
    - [Query Optimization](#query-optimization)
    - [Monitoring](#monitoring)
@@ -61,10 +63,10 @@ This guide provides production-ready patterns for securing SQL databases across 
 
 **Real-World Breaches:**
 
-- **Uber (2016)**: MongoDB breach exposed 57M users due to stolen credentials
-- **Equifax (2017)**: Database vulnerability exposed 147M records, $700M settlement
-- **Capital One (2019)**: AWS RDS misconfiguration exposed 100M+ credit applications
-- **MGM Resorts (2019)**: Unencrypted database exposed 142M guest records
+- **Uber (2016)**: Attackers reused leaked passwords to get into engineers' GitHub accounts (no MFA), found a hardcoded AWS access key in a private repo, and downloaded unencrypted database backups from S3, exposing 57M riders and drivers
+- **Equifax (2017)**: An unpatched Apache Struts flaw (CVE-2017-5638) in a public dispute portal, then plaintext database credentials on that server, let attackers query 147M consumers' records for 76 days undetected; settlement up to $700M
+- **Capital One (2019)**: An attacker used an SSRF bug in a misconfigured WAF on EC2 to pull the instance's over-privileged IAM role credentials from the metadata service, and ~106M credit applications were copied out of S3 - no database was touched (not RDS)
+- **MGM Resorts (2019)**: A compromised cloud server leaked guest contact records; MGM confirmed 10.6M guests (a later dark-web listing claimed 142M, never confirmed)
 
 **Core Principles:**
 
@@ -177,13 +179,13 @@ Primary (writes only)
 
 **Default to SQL for most applications.** Use managed PostgreSQL (RDS, Cloud SQL, Azure Database) unless you have proven requirements for NoSQL.
 
-| Aspect                | SQL (PostgreSQL)                             | NoSQL (DynamoDB, Firestore, MongoDB)        |
-| --------------------- | -------------------------------------------- | ------------------------------------------- |
-| **Data Integrity**    | ACID transactions, foreign keys, constraints | Eventually consistent, limited transactions |
-| **Query Flexibility** | Complex JOINs, ad-hoc queries                | Must design for access patterns upfront     |
-| **Security Model**    | Row-level permissions, query validation      | Application-enforced, no query validation   |
-| **Audit Logging**     | Granular (pgaudit)                           | Vendor-specific, often expensive            |
-| **Team Familiarity**  | Universal SQL knowledge                      | Specialized per database                    |
+| Aspect                | SQL (PostgreSQL)                             | NoSQL (DynamoDB, Firestore, MongoDB)      |
+| --------------------- | -------------------------------------------- | ----------------------------------------- |
+| **Data Integrity**    | ACID transactions, foreign keys, constraints | Limited transactions; consistency varies  |
+| **Query Flexibility** | Complex JOINs, ad-hoc queries                | Must design for access patterns upfront   |
+| **Security Model**    | Row-level permissions, query validation      | Application-enforced, no query validation |
+| **Audit Logging**     | Granular (pgaudit)                           | Vendor-specific, often expensive          |
+| **Team Familiarity**  | Universal SQL knowledge                      | Specialized per database                  |
 
 **When You Actually Need NoSQL:**
 
@@ -204,7 +206,7 @@ Choose NoSQL only when you have **proven, measured requirements**:
 
 **Key Security Difference:**
 
-SQL databases enforce permissions and validate queries at the database layer. NoSQL databases trust the application to enforce all authorization - the database only validates IAM/security rules but cannot prevent the application from accessing any data those rules allow.
+SQL databases enforce GRANTs at the database layer, and PostgreSQL Row-Level Security can limit which rows a user sees. Without RLS policies, though, an application user with `SELECT` on `users` reads every row. DynamoDB IAM conditions and Firestore rules are also enforced server-side, but a backend running as one role can read anything its rules allow. Either way, check in application code that the user owns the record.
 
 ### NoSQL Security Implementation
 
@@ -219,17 +221,17 @@ Access control via IAM policies:
   "Resource": "arn:aws:dynamodb:*:*:table/users",
   "Condition": {
     "ForAllValues:StringEquals": {
-      "dynamodb:LeadingKeys": ["${aws:userid}"]
+      "dynamodb:LeadingKeys": ["${cognito-identity.amazonaws.com:sub}"]
     }
   }
 }
 ```
 
-**Critical:** Without IAM conditions, application can read entire table. Always validate user owns the resource in application code.
+**Critical:** `LeadingKeys` only scopes access when each end user calls DynamoDB with their own federated credentials (e.g. Cognito identity pools). A backend with one IAM role can read the entire table, so always validate that the user owns the resource in application code.
 
 Configuration:
 
-- At-rest encryption: Enable KMS encryption on table creation
+- At-rest encryption: Always on (AWS owned key by default); switch to a customer managed KMS key, at creation or later, when you need key-policy control and CloudTrail audit of key use
 - In-transit: TLS by default
 - Point-in-Time Recovery: Enable for production tables
 - Audit logging: CloudTrail data events (expensive, enable only for sensitive tables)
@@ -238,9 +240,14 @@ Configuration:
 
 Security rules required for client access:
 
-```javascript
-match /users/{userId} {
-  allow read, write: if request.auth != null && request.auth.uid == userId;
+```text
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /users/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+  }
 }
 ```
 
@@ -272,8 +279,8 @@ Configuration:
 
 - At-rest encryption: Enabled by default (cloud provider keys or CMEK)
 - In-transit: TLS required
-- Field-level encryption: Client-side field-level encryption (CSFLE) for PII/PHI
-- Audit logging: Database auditing (M10+ clusters), export to S3/Cloud Logging/Azure Monitor
+- Field-level encryption: Queryable Encryption (equality and range queries on encrypted fields, MongoDB 8.0+) or Client-Side Field Level Encryption (CSFLE) for PII/PHI
+- Audit logging: Database auditing (M10+ clusters), log export (MongoDB 7.0+) to S3, Google Cloud Storage, Azure Blob Storage, Datadog, Splunk or OpenTelemetry
 
 **Common NoSQL Security Risks:**
 
@@ -343,6 +350,7 @@ Restrict database access to only authorized sources.
 - Use security group IDs as sources (not CIDR ranges)
 - Never allow `0.0.0.0/0` inbound on port 5432
 - Separate security groups per environment (dev, staging, prod)
+- On EKS, `sg-k8s-workers` admits every pod on those nodes; use Security Groups for Pods so only the app's pods reach 5432
 
 ### Connection from Applications
 
@@ -354,26 +362,34 @@ Use Secrets Store CSI Driver to inject credentials from cloud secrets manager in
 
 **Why this approach:**
 
-- Credentials never stored in Kubernetes native Secrets (which are only base64-encoded, not encrypted)
-- Automatic synchronization with external vault (rotation updates pods automatically)
-- Cloud-native integration using Workload Identity/IRSA (no long-lived credentials)
+- The external vault stays the source of truth; the synced Kubernetes Secret is a namespaced cache that follows the vault (managed control planes already encrypt etcd at rest - EKS envelope-encrypts all API data with KMS on 1.28+, GKE encrypts Secrets at rest by default, AKS supports KMS etcd encryption - so the win is central rotation, audit and IAM-scoped access, not "base64 vs encrypted")
+- Automatic synchronization with external vault (rotation refreshes mounted files and the synced Secret)
+- Cloud-native workload identity (EKS Pod Identity or IRSA, Workload Identity Federation for GKE, Microsoft Entra Workload ID) - no long-lived credentials
 - Audit trail in cloud provider logs
 
 **Cloud-native integrations:**
 
-- **AWS EKS**: Secrets Store CSI Driver with AWS Secrets Manager
-- **GKE**: Workload Identity with Secret Manager
-- **AKS**: Azure Key Vault Provider for Secrets Store CSI Driver
+- **AWS EKS**: AWS Secrets and Configuration Provider (ASCP) for the Secrets Store CSI Driver, also packaged as the `aws-secrets-store-csi-driver-provider` EKS add-on; authenticate with EKS Pod Identity (`usePodIdentity: "true"`) or IRSA
+- **GKE**: Secret Manager add-on (Google-managed Secrets Store CSI Driver, `secrets-store-gke.csi.k8s.io`) with Workload Identity Federation for GKE
+- **AKS**: Azure Key Vault Provider for Secrets Store CSI Driver with Microsoft Entra Workload ID
 
 **Setup (AWS EKS Example):**
 
 ```bash
-# Step 1: Install Secrets Store CSI Driver
+# Step 1: Install Secrets Store CSI Driver (Secret sync and rotation are OFF by default - enable both)
 helm repo add secrets-store-csi-driver https://kubernetes-sigs.github.io/secrets-store-csi-driver/charts
-helm install csi-secrets-store secrets-store-csi-driver/secrets-store-csi-driver --namespace kube-system
+helm install csi-secrets-store secrets-store-csi-driver/secrets-store-csi-driver \
+  --namespace kube-system \
+  --set syncSecret.enabled=true \
+  --set enableSecretRotation=true \
+  --set rotationPollInterval=2m \
+  --set 'tokenRequests[0].audience=sts.amazonaws.com' \
+  --set 'tokenRequests[1].audience=pods.eks.amazonaws.com'  # ASCP needs these audiences (IRSA, Pod Identity)
 
-# Step 2: Install AWS Secrets Manager provider
-kubectl apply -f https://raw.githubusercontent.com/aws/secrets-store-csi-driver-provider-aws/main/deployment/aws-provider-installer.yaml
+# Step 2: Install AWS Secrets Manager provider (skip its bundled copy of the driver - installed above)
+helm repo add aws-secrets-manager https://aws.github.io/secrets-store-csi-driver-provider-aws
+helm install -n kube-system secrets-provider-aws aws-secrets-manager/secrets-store-csi-driver-provider-aws \
+  --set secrets-store-csi-driver.install=false
 ```
 
 **SecretProviderClass Configuration:**
@@ -420,7 +436,7 @@ metadata:
   name: app-pod
   namespace: production
 spec:
-  serviceAccountName: app-service-account # Must have IRSA/Workload Identity configured
+  serviceAccountName: app-service-account # Bound to an IAM role via EKS Pod Identity (preferred) or IRSA; for Pod Identity add `usePodIdentity: "true"` to the SecretProviderClass spec.parameters
   containers:
     - name: app
       image: myapp:latest
@@ -459,12 +475,12 @@ spec:
 
 **How this works:**
 
-1. CSI driver authenticates to AWS using pod's IRSA role
+1. The AWS provider (ASCP) authenticates to AWS with the pod's EKS Pod Identity association or IRSA role
 2. Fetches secrets from AWS Secrets Manager
 3. Creates Kubernetes Secret (`db-credentials`) with vault contents
 4. Pod consumes secret via environment variables
-5. When vault secret rotates, CSI driver automatically updates K8s Secret
-6. Pod restart picks up new credentials (no manual intervention)
+5. When the vault secret rotates, the driver (with `enableSecretRotation=true`) refreshes the mounted files and the synced K8s Secret on the next poll
+6. Environment variables are read once at start - run [Reloader](https://github.com/stakater/Reloader) (or read `/mnt/secrets/*` at connect time) so pods pick up rotated credentials without a manual restart
 
 **From Serverless:**
 
@@ -475,16 +491,25 @@ Serverless functions retrieve credentials at runtime directly from secrets manag
 - Credentials fetched on cold start (not in deployment package)
 - IAM role controls which functions can access which secrets
 - Audit trail of secret access in CloudTrail
-- Rotation updates are immediate (no redeployment needed)
+- Rotation needs no redeployment: the cache re-fetches after its TTL, and on an authentication failure re-fetch the secret and retry once
 
 ```python
-import boto3
 import json
+import time
 
-def get_db_credentials():
-    client = boto3.client('secretsmanager', region_name='us-east-1')
-    response = client.get_secret_value(SecretId='prod/database/credentials')
-    return json.loads(response['SecretString'])
+import boto3
+
+# Created once per cold start and reused by warm invocations
+client = boto3.client('secretsmanager', region_name='us-east-1')
+_cache = {'value': None, 'expires': 0.0}
+
+def get_db_credentials(ttl_seconds=300):
+    # Re-fetch after the TTL so rotated credentials are picked up
+    if time.time() >= _cache['expires']:
+        response = client.get_secret_value(SecretId='prod/database/credentials')
+        _cache['value'] = json.loads(response['SecretString'])
+        _cache['expires'] = time.time() + ttl_seconds
+    return _cache['value']
 ```
 
 ## 6. Authentication & Access Control
@@ -502,22 +527,55 @@ Create application-specific database users with minimal required permissions.
 CREATE USER api_app_user WITH PASSWORD 'secure_password_from_vault';
 
 -- Grant only necessary permissions on specific tables
+GRANT USAGE ON SCHEMA public TO api_app_user;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE users, orders TO api_app_user;
 
--- Revoke dangerous permissions
-REVOKE CREATE ON SCHEMA public FROM api_app_user;
-REVOKE ALL ON pg_catalog, information_schema FROM api_app_user;
+-- Lock down the public schema. CREATE on public is granted to PUBLIC, not to the user:
+-- revoke it there (the default on new PostgreSQL 15+ databases; upgrades keep the old grant)
+REVOKE CREATE ON SCHEMA public FROM PUBLIC;
 
--- For read-only analytics user
+-- Leave pg_catalog and information_schema alone: access comes via PUBLIC,
+-- and drivers, ORMs and psql need to read the catalogs
+
+-- For read-only analytics user (ALL TABLES covers existing tables only; DEFAULT PRIVILEGES covers future ones
+-- created by the role named in FOR ROLE - use the role that runs your migrations)
 CREATE USER analytics_readonly WITH PASSWORD 'secure_password_from_vault';
+GRANT USAGE ON SCHEMA public TO analytics_readonly;
 GRANT SELECT ON ALL TABLES IN SCHEMA public TO analytics_readonly;
+ALTER DEFAULT PRIVILEGES FOR ROLE migration_owner IN SCHEMA public
+  GRANT SELECT ON TABLES TO analytics_readonly;
 ```
 
 **Best Practices:**
 
 - Grant permissions on specific tables, not entire schemas
 - Separate users for different applications
-- Revoke CREATE, DROP, ALTER permissions from application users
+- Revoke CREATE on schemas from application users, and never let them own tables: PostgreSQL has no grantable DROP or ALTER privilege - the table owner (and any member of the owning role) can always run them, so run migrations as a separate owner role
+
+### Row-Level Security for Multi-Tenant Data
+
+**If tenants share tables, enforce isolation in the database, not only in application code.** One missing `WHERE tenant_id = ...` leaks another customer's data. PostgreSQL Row-Level Security (RLS) applies the tenant filter to every query and blocks writes into other tenants, so a bug returns zero rows instead of someone else's.
+
+```sql
+ALTER TABLE orders ENABLE ROW LEVEL SECURITY;
+ALTER TABLE orders FORCE ROW LEVEL SECURITY; -- Applies to the table owner too
+
+CREATE POLICY tenant_isolation ON orders
+  USING (tenant_id = nullif(current_setting('app.tenant_id', true), '')::uuid)
+  WITH CHECK (tenant_id = nullif(current_setting('app.tenant_id', true), '')::uuid);
+
+-- Per request, first statement inside the transaction ($1 bound by the driver):
+-- SELECT set_config('app.tenant_id', $1, true);  -- true = transaction-local
+```
+
+**Rules:**
+
+- No tenant set = no rows; no policy = default deny
+- Superusers and roles with `BYPASSRLS` skip every policy - the application role must be neither
+- Never set the tenant with session-level `SET`; it survives `release()` into the next request on that pooled connection
+- Views check policies as the view owner, so a view owned by a superuser returns every tenant's rows - create views `WITH (security_invoker = true)` (PostgreSQL 15+)
+- Index `tenant_id` - the policy predicate runs on every query
+- RLS is a backstop, not a replacement for authorization checks in application code
 
 ### IAM Database Authentication
 
@@ -525,11 +583,19 @@ Eliminate password-based authentication using cloud IAM roles (ephemeral 15-minu
 
 **AWS RDS IAM Authentication:**
 
+```sql
+-- One-time: the database user must hold rds_iam (no password is set)
+CREATE USER api_iam_user;
+GRANT rds_iam TO api_iam_user;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE users, orders TO api_iam_user;
+```
+
 ```python
 import boto3
 import psycopg2
 
-# Generate short-lived authentication token (valid 15 minutes)
+# Generate short-lived authentication token (valid 15 minutes). It is checked only when a
+# connection opens: pools must generate a fresh token for each new connection
 rds_client = boto3.client('rds', region_name='us-east-1')
 token = rds_client.generate_db_auth_token(
     DBHostname='prod-db.cluster.us-east-1.rds.amazonaws.com',
@@ -544,7 +610,8 @@ connection = psycopg2.connect(
     user='api_iam_user',
     password=token,
     database='mydb',
-    sslmode='require'
+    sslmode='verify-full',  # The token is a bearer credential: verify the server first
+    sslrootcert='/etc/ssl/rds/global-bundle.pem'  # From truststore.pki.rds.amazonaws.com
 )
 ```
 
@@ -553,13 +620,13 @@ connection = psycopg2.connect(
 - No long-lived passwords to manage or rotate
 - Tokens expire after 15 minutes
 - IAM controls who can generate tokens
-- Audit trail in CloudTrail
+- Audit trail from PostgreSQL connection logging (`log_connections = on`) - CloudTrail does **not** record `generate-db-auth-token`
 
-**GCP Cloud SQL and Azure Database support similar IAM authentication.**
+**GCP Cloud SQL (IAM database authentication) and Azure Database for PostgreSQL (Microsoft Entra authentication) support similar token-based login.**
 
 ### Secrets Management
 
-Store database credentials in external secrets manager, never in code or environment variables.
+Store database credentials in an external secrets manager, never in code, container images or committed config. Inject them at runtime; a mounted file (`/mnt/secrets`) is safer than an environment variable, which child processes inherit and crash dumps capture.
 
 **Secrets to Store:**
 
@@ -585,20 +652,20 @@ aws secretsmanager create-secret \
 
 **Credential Rotation:**
 
-Modern best practices (NIST SP 800-63B, OWASP 2024): Routine rotation no longer recommended - focus on preventing exposure.
+Prefer credentials that expire on their own (IAM database authentication, workload identity) so there is nothing static to rotate. NIST SP 800-63B-4's rule against forced periodic changes covers user passwords only, never service credentials; OWASP recommends rotating secrets regularly, and PCI DSS v4.0.1 Req 8.6.3 requires application and system account passwords to be changed "periodically (at the frequency defined in the entity's targeted risk analysis) and upon suspicion or confirmation of compromise".
 
-**Rotate only when:**
+**Rotate static database passwords:**
 
-- Secrets confirmed or suspected compromised
-- Employee with access leaves organization
-- Compliance requirements mandate rotation
+- Immediately when compromise is confirmed or suspected
+- Immediately when someone with access leaves
+- Otherwise on a documented risk-based schedule, automated with Secrets Manager rotation (90 days is a common choice)
 
 **Better security approach:**
 
 - Use short-lived credentials (IAM database authentication - tokens expire after 15 minutes)
 - Implement proper access controls and audit logging
 - Monitor for unauthorized access attempts
-- Use Workload Identity/IRSA in Kubernetes (automatic credential refresh)
+- Use workload identity in Kubernetes (EKS Pod Identity or IRSA, Workload Identity Federation for GKE, Microsoft Entra Workload ID) for automatic credential refresh
 
 ## 7. Encryption
 
@@ -608,11 +675,11 @@ Enable database encryption to protect against physical disk theft and unauthoriz
 
 **Managed Database Encryption:**
 
-Enable encryption at database creation:
+Choose encryption and the key at database creation (none of these can be changed in place later):
 
-- **AWS RDS**: `storage_encrypted = true` with optional KMS key
-- **GCP Cloud SQL**: Enable disk encryption with customer-managed keys
-- **Azure Database**: Transparent Data Encryption (TDE) enabled by default
+- **AWS RDS**: `storage_encrypted = true` with a customer managed `kms_key_id` (opt-in for RDS for PostgreSQL; an unencrypted instance is fixed only by restoring an encrypted snapshot copy). New Aurora clusters are encrypted by default since February 2026 with an AWS owned key - pick a customer managed key when you need to audit or control it
+- **GCP Cloud SQL**: Encrypted by default with Google-managed keys; select CMEK at instance creation if you need to control the key
+- **Azure Database**: Storage encryption always on with service-managed keys; customer-managed keys (Key Vault) only at server creation
 
 **When Managed Encryption Protects:**
 
@@ -625,7 +692,7 @@ Enable encryption at database creation:
 - Application compromise with database credentials
 - SQL injection attacks
 - Database administrator with legitimate access
-- Stolen database backups (if not separately encrypted)
+- Logical backups (`pg_dump`, exports) taken outside the managed service, unless separately encrypted
 
 ### Field-Level Encryption for PII/PHI
 
@@ -649,6 +716,8 @@ Store: Encrypted data + Encrypted DEK
 
 **Implementation (Python with AWS KMS):**
 
+Fernet splits the 32-byte `AES_256` data key into a 128-bit HMAC-SHA256 key and a 128-bit AES-CBC key, so the data itself is AES-128 authenticated encryption. That is sound; if a standard mandates AES-256, use `AESGCM` from the same `cryptography` package or the AWS Encryption SDK.
+
 ```python
 import boto3
 import base64
@@ -656,30 +725,37 @@ from cryptography.fernet import Fernet
 
 kms = boto3.client('kms', region_name='us-east-1')
 
-def encrypt_field(plaintext, kms_key_id):
-    # Generate data encryption key from KMS
-    response = kms.generate_data_key(KeyId=kms_key_id, KeySpec='AES_256')
+def encrypt_field(plaintext, kms_key_id, context):
+    # context binds the DEK to one record, e.g. {'table': 'users', 'column': 'ssn', 'id': str(user_id)}.
+    # KMS refuses to decrypt it under any other context, so ciphertext copied to another row is useless.
+    response = kms.generate_data_key(
+        KeyId=kms_key_id, KeySpec='AES_256', EncryptionContext=context
+    )
     plaintext_key = response['Plaintext']
     encrypted_key = response['CiphertextBlob']
 
-    # Encrypt data with DEK
-    cipher = Fernet(base64.urlsafe_b64encode(plaintext_key[:32]))
-    encrypted_data = cipher.encrypt(plaintext.encode())
+    # Encrypt data with DEK (Fernet: AES-128-CBC + HMAC-SHA256 from the 32-byte key)
+    cipher = Fernet(base64.urlsafe_b64encode(plaintext_key))
+    encrypted_data = cipher.encrypt(plaintext.encode())  # Fernet token, already base64
 
     # Return both encrypted data and encrypted DEK
     return {
-        'encrypted_data': base64.b64encode(encrypted_data).decode(),
+        'encrypted_data': encrypted_data.decode(),
         'encrypted_key': base64.b64encode(encrypted_key).decode()
     }
 
-def decrypt_field(encrypted_data, encrypted_key):
-    # Decrypt DEK using KMS
-    response = kms.decrypt(CiphertextBlob=base64.b64decode(encrypted_key))
+def decrypt_field(encrypted_data, encrypted_key, kms_key_id, context):
+    # Decrypt DEK using KMS - fails unless the same encryption context is supplied
+    response = kms.decrypt(
+        CiphertextBlob=base64.b64decode(encrypted_key),
+        KeyId=kms_key_id,
+        EncryptionContext=context
+    )
     plaintext_key = response['Plaintext']
 
     # Decrypt data with DEK
-    cipher = Fernet(base64.urlsafe_b64encode(plaintext_key[:32]))
-    return cipher.decrypt(base64.b64decode(encrypted_data)).decode()
+    cipher = Fernet(base64.urlsafe_b64encode(plaintext_key))
+    return cipher.decrypt(encrypted_data.encode()).decode()
 ```
 
 **Cloud KMS Options:**
@@ -706,23 +782,26 @@ CREATE INDEX idx_users_email ON users(email);
 **How this works in practice:**
 
 ```python
-# When creating a user
+# When creating a user (psycopg2 cursor: placeholders are %s, not $1)
 kms_key_id = 'arn:aws:kms:us-east-1:123456789012:key/abcd1234...'
+context = {'table': 'users', 'column': 'ssn', 'id': str(user_id)}
+cur = conn.cursor()
 
 # Encrypt SSN before storing
-encrypted_ssn = encrypt_field('123-45-6789', kms_key_id)
+encrypted_ssn = encrypt_field('123-45-6789', kms_key_id, context)
 
 # Store in database
-conn.execute(
-    "INSERT INTO users (id, email, ssn_encrypted, ssn_dek_encrypted) VALUES ($1, $2, $3, $4)",
-    [user_id, email, encrypted_ssn['encrypted_data'], encrypted_ssn['encrypted_key']]
+cur.execute(
+    "INSERT INTO users (id, email, ssn_encrypted, ssn_dek_encrypted) VALUES (%s, %s, %s, %s)",
+    (str(user_id), email, encrypted_ssn['encrypted_data'], encrypted_ssn['encrypted_key'])
 )
 
 # When retrieving a user
-row = conn.execute("SELECT ssn_encrypted, ssn_dek_encrypted FROM users WHERE id = $1", [user_id])
+cur.execute("SELECT ssn_encrypted, ssn_dek_encrypted FROM users WHERE id = %s", (str(user_id),))
+ssn_encrypted, ssn_dek_encrypted = cur.fetchone()
 
 # Decrypt SSN
-ssn = decrypt_field(row['ssn_encrypted'], row['ssn_dek_encrypted'])
+ssn = decrypt_field(ssn_encrypted, ssn_dek_encrypted, kms_key_id, context)
 # Application has decrypted SSN: '123-45-6789'
 ```
 
@@ -738,7 +817,7 @@ If an attacker gains database access through SQL injection, compromised credenti
 **What each layer protects:**
 
 - **Managed database encryption**: Protects against physical disk theft
-- **Field-level encryption**: Protects against application/database compromise, DBAs, cloud admins
+- **Field-level encryption**: Protects against database-only compromise (SQL injection, leaked DB credentials or dumps) and DBAs without KMS access - not against code running as the application (it holds `kms:Decrypt`) or cloud admins who can change the key policy
 - **In-transit encryption**: Protects against network eavesdropping
 - **Access controls**: Prevents unauthorized KMS decrypt access
 
@@ -746,8 +825,9 @@ If an attacker gains database access through SQL injection, compromised credenti
 
 - **Performance**: Encrypt only necessary fields (SSN, credit cards), not entire records
 - **Searchability**: Encrypted fields cannot be queried/indexed
-- **Key rotation**: Rotate KEK annually, re-encrypt DEKs (data re-encryption not required)
+- **Key rotation**: Enable KMS automatic rotation (period configurable 90-2560 days, default 365; on-demand rotation also available). KMS keeps old key material, so stored DEKs still decrypt without re-encryption; re-wrap DEKs with `ReEncrypt` only when moving to a new KMS key
 - **Access control**: Restrict KMS key permissions to application service accounts only
+- **Row binding**: Always pass a per-record `EncryptionContext` (as `encrypt_field` does); without it, an attacker with SQL write access can copy a victim's `ssn_encrypted` and `ssn_dek_encrypted` into their own row and let the app decrypt them
 
 **Defense in Depth:**
 
@@ -766,8 +846,8 @@ Encrypt all database connections using TLS/SSL to prevent credential exposure an
 
 **Enable TLS/SSL:**
 
-- **AWS RDS**: Set `require_secure_transport = 1` parameter
-- **GCP Cloud SQL**: Enable "Require SSL" option
+- **AWS RDS (PostgreSQL)**: `rds.force_ssl = 1` in a custom parameter group (already the default on RDS for PostgreSQL 15+; `require_secure_transport` is the MySQL/MariaDB parameter)
+- **GCP Cloud SQL**: `gcloud sql instances patch INSTANCE --ssl-mode=ENCRYPTED_ONLY` (the legacy "Require SSL" / `require-ssl` flag is superseded by `ssl_mode`)
 - **Azure Database**: Set `require_secure_transport = ON`
 
 **Connection String:**
@@ -781,7 +861,8 @@ conn = psycopg2.connect(
     database="mydb",
     user="api_app_user",
     password="secure_password",
-    sslmode="require"  # Enforce SSL - connection fails if TLS not available
+    sslmode="verify-full",  # Encrypt AND verify CA + hostname (see SSL Modes below)
+    sslrootcert="/etc/ssl/rds/global-bundle.pem"  # provider CA bundle, e.g. https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem
 )
 ```
 
@@ -791,8 +872,8 @@ conn = psycopg2.connect(
 | ------------- | ---------- | ---------------------- | -------------- | ----------------------------------------------------------- |
 | `disable`     | ❌ No      | ❌ No                  | None           | Never use in production                                     |
 | `require`     | ✅ Yes     | ❌ No                  | Basic          | Minimum for production - encrypts but doesn't verify server |
-| `verify-ca`   | ✅ Yes     | ⚠️ CA only             | Better         | Validates certificate authority, prevents impersonation     |
-| `verify-full` | ✅ Yes     | ✅ Full                | Best           | Validates CA and hostname match - prevents all MITM attacks |
+| `verify-ca`   | ✅ Yes     | ⚠️ CA only             | Better         | Any cert from the same CA passes (e.g. any RDS instance)    |
+| `verify-full` | ✅ Yes     | ✅ Full                | Best           | Validates CA and hostname match - blocks impersonation      |
 
 **What each mode protects against:**
 
@@ -829,7 +910,7 @@ Total time: 10ms for 2 queries (40x faster)
 
 **Why this matters:**
 
-- **Performance**: 10x faster query response (eliminates connection overhead)
+- **Performance**: Removes per-request connection setup (TCP, TLS, and authentication handshakes)
 - **Security**: Prevents connection exhaustion attacks (limits max connections)
 - **Reliability**: Reduces database resource consumption (fewer TCP handshakes, auth checks)
 
@@ -842,8 +923,9 @@ Use RDS Proxy for serverless functions because each Lambda instance creates its 
 - Lambda creates connection to RDS Proxy (not directly to database)
 - RDS Proxy multiplexes thousands of Lambda connections into ~100 database connections
 - Database sees consistent connection count regardless of Lambda scaling
+- Avoid session-level `SET` (including `SET statement_timeout`) through the proxy: on PostgreSQL it pins the connection and defeats multiplexing. Set timeouts with `ALTER ROLE ... SET` instead
 
-**Serverless (RDS Proxy):**
+**Example (Lambda via RDS Proxy):**
 
 ```javascript
 const { Pool } = require("pg");
@@ -860,6 +942,7 @@ const pool = new Pool({
 **Containers (Application-Level):**
 
 ```javascript
+const fs = require("fs");
 const { Pool } = require("pg");
 
 const pool = new Pool({
@@ -868,7 +951,12 @@ const pool = new Pool({
   max: 20, // Max connections per container
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 2000,
-  ssl: { rejectUnauthorized: true },
+  ssl: {
+    rejectUnauthorized: true,
+    // RDS certificates chain to Amazon RDS root CAs, which are not in Node's trust store
+    // (https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem)
+    ca: fs.readFileSync("/etc/ssl/rds/global-bundle.pem").toString(),
+  },
 });
 
 async function getUser(id) {
@@ -888,12 +976,6 @@ async function getUser(id) {
 
 For very high scale, use PgBouncer to multiplex thousands of app connections into fewer database connections.
 
-**Benefits:**
-
-- 10x faster query response (eliminates connection overhead)
-- Prevents connection exhaustion attacks
-- Reduces database resource consumption
-
 ### Query Timeouts for DoS Prevention
 
 Query timeouts prevent resource exhaustion attacks where malicious or poorly optimized queries consume database resources indefinitely. Without timeouts, a single bad query can lock tables, exhaust connections, and cause cascading failures.
@@ -903,17 +985,21 @@ Query timeouts prevent resource exhaustion attacks where malicious or poorly opt
 ```sql
 -- Set at database level (recommended for production)
 ALTER DATABASE mydb SET statement_timeout = '30s';
+-- statement_timeout does not end idle transactions that hold locks
+ALTER DATABASE mydb SET idle_in_transaction_session_timeout = '60s';
+ALTER DATABASE mydb SET lock_timeout = '5s';
 
 -- Set at user level (application-specific limits)
 ALTER ROLE api_app_user SET statement_timeout = '5s';
 
--- Set at session level (per-connection override)
+-- Set at session level (per-connection override; never on pooled connections, use SET LOCAL inside a transaction)
 SET statement_timeout = '10s';
 ```
 
 **Application-Level Timeouts:**
 
 ```javascript
+const fs = require("fs");
 const { Pool } = require("pg");
 
 const pool = new Pool({
@@ -924,15 +1010,25 @@ const pool = new Pool({
   idleTimeoutMillis: 30000, // Close idle connections
   query_timeout: 5000, // Timeout individual queries (5s)
   statement_timeout: 5000, // PostgreSQL statement timeout
+  ssl: {
+    rejectUnauthorized: true,
+    ca: fs.readFileSync("/etc/ssl/rds/global-bundle.pem").toString(),
+  },
 });
 
-// Per-query timeout override
+// Per-query timeout override: SET LOCAL ends with the transaction, so the
+// 30s limit never leaks to the next borrower of this pooled connection
 async function complexQuery() {
   const client = await pool.connect();
   try {
-    await client.query("SET statement_timeout = 30000"); // 30s for this query
+    await client.query("BEGIN");
+    await client.query("SET LOCAL statement_timeout = 30000"); // 30s, this transaction only
     const result = await client.query("SELECT * FROM large_table WHERE ...");
+    await client.query("COMMIT");
     return result.rows;
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
   } finally {
     client.release();
   }
@@ -971,19 +1067,20 @@ CROSS JOIN users u2
 CROSS JOIN users u3;  -- Cartesian product: billions of rows
 
 -- With statement_timeout = 5s: query cancelled, no damage
-ERROR:  canceling statement due to statement timeout
+-- ERROR:  canceling statement due to statement timeout
 ```
 
 **Monitoring query timeouts:**
 
-```sql
--- PostgreSQL: Track timeout frequency
-SELECT count(*) as timeout_count
-FROM pg_stat_statements
-WHERE query LIKE '%statement timeout%';
+PostgreSQL logs every cancelled statement as `ERROR:  canceling statement due to statement timeout`; count those log lines (`pg_stat_statements` can't: it stores normalized query text, not errors, and records no execution statistics for statements that fail). CloudWatch Logs Insights on the exported `/aws/rds/instance/<id>/postgresql` log group:
 
--- Alert if timeout rate > 1% of total queries
+```text
+fields @timestamp, @message
+| filter @message like /canceling statement due to statement timeout/
+| stats count(*) as timeouts by bin(5m)
 ```
+
+Alert if timeouts exceed 1% of total queries.
 
 **Best practices:**
 
@@ -995,7 +1092,7 @@ WHERE query LIKE '%statement timeout%';
 
 ### Read/Write Splitting
 
-Route read queries to replicas and write queries to primary to protect the single-write bottleneck.
+Route read queries to replicas and write queries to the primary to keep load off the single write node.
 
 **Why this pattern matters:**
 
@@ -1105,45 +1202,43 @@ query = f"SELECT * FROM users WHERE email = '{email}'"
 **How prepared statements prevent it:**
 
 ```python
-# Good: Parameterized query
+# Good: Parameterized query (psycopg placeholder is %s; node-postgres uses $1)
 email = "'; DROP TABLE users; --"  # Same malicious input
-query = "SELECT * FROM users WHERE email = $1"
-params = [email]
-# Database treats entire input as a literal string, not executable SQL
+cursor.execute("SELECT * FROM users WHERE email = %s", (email,))
+# Input is treated as a literal string, not executable SQL
 # Result: No users found (safe - query looks for email "'; DROP TABLE users; --")
 ```
 
 **Why this works:**
 
-- SQL structure sent to database separately from data values
-- Database knows `$1` is a parameter placeholder (not SQL code)
+- SQL structure kept separate from data values (node-postgres and psycopg 3 send them separately; psycopg2 escapes them client-side)
+- The placeholder (`$1`, `%s`) marks a value slot, never SQL code
 - User input cannot modify query structure
-- Bonus: Database caches query plan (faster execution)
+- Bonus: prepared statements (node-postgres `name` option; psycopg 3 prepares repeated queries) let PostgreSQL reuse the query plan
 
 ```javascript
 // Good: Parameterized query
 const result = await pool.query(
   "SELECT * FROM users WHERE email = $1 AND status = $2",
-  [email, "active"]
+  [email, "active"],
 );
 
 // Bad: String concatenation (SQL injection risk)
-const result = await pool.query(`SELECT * FROM users WHERE email = '${email}'`);
+const unsafe = await pool.query(`SELECT * FROM users WHERE email = '${email}'`);
 ```
 
 **Set Query Timeouts:**
 
-```javascript
-await client.query("SET statement_timeout = 5000"); // 5 second max
-```
+See [Query Timeouts for DoS Prevention](#query-timeouts-for-dos-prevention).
 
 **Use LIMIT:**
 
 ```javascript
-// Paginate results
+// Paginate results - cap the client-supplied page size
+const pageSize = Math.min(Math.max(Number(limit) || 20, 1), 100);
 const users = await pool.query(
   "SELECT * FROM users ORDER BY created_at DESC LIMIT $1 OFFSET $2",
-  [limit, offset]
+  [pageSize, offset],
 );
 ```
 
@@ -1151,16 +1246,18 @@ const users = await pool.query(
 
 ```javascript
 // Bad: N+1 queries
-const users = await db.query("SELECT * FROM users LIMIT 10");
+const { rows: users } = await db.query("SELECT * FROM users LIMIT 10");
 for (const user of users) {
-  user.orders = await db.query("SELECT * FROM orders WHERE user_id = $1", [
+  const { rows } = await db.query("SELECT * FROM orders WHERE user_id = $1", [
     user.id,
   ]);
+  user.orders = rows;
 }
 
 // Good: Single JOIN
-const users = await db.query(`
-  SELECT u.*, json_agg(o.*) as orders
+const { rows: usersWithOrders } = await db.query(`
+  SELECT u.*,
+         COALESCE(json_agg(o.*) FILTER (WHERE o.id IS NOT NULL), '[]') AS orders
   FROM users u
   LEFT JOIN orders o ON o.user_id = u.id
   GROUP BY u.id
@@ -1171,9 +1268,10 @@ const users = await db.query(`
 **Create Indexes:**
 
 ```sql
--- Add indexes for common queries
-CREATE INDEX idx_users_email ON users(email);
-CREATE INDEX idx_orders_user_created ON orders(user_id, created_at DESC);
+-- Add indexes for common queries (CONCURRENTLY avoids blocking writes on live tables;
+-- it can't run inside a transaction block)
+CREATE INDEX CONCURRENTLY idx_users_email ON users(email);
+CREATE INDEX CONCURRENTLY idx_orders_user_created ON orders(user_id, created_at DESC);
 ```
 
 ### Monitoring
@@ -1192,7 +1290,7 @@ Monitor database performance to detect attacks and degradation early.
 
 **Cloud Monitoring:**
 
-- **AWS**: CloudWatch RDS metrics, Performance Insights
+- **AWS**: CloudWatch RDS metrics, CloudWatch Database Insights (replaced the Performance Insights console on July 31, 2026)
 - **GCP**: Cloud Monitoring, Query Insights
 - **Azure**: Azure Monitor, Query Performance Insight
 
@@ -1204,14 +1302,14 @@ Enable automated daily snapshots with appropriate retention.
 
 **Configuration:**
 
-- **AWS RDS**: Automated backups with 7-35 day retention
-- **GCP Cloud SQL**: Automated backups with 7-365 day retention
+- **AWS RDS**: Automated backups with 1-35 day retention (set it explicitly: the API/CLI default is 1 day)
+- **GCP Cloud SQL**: Automated backups with 1-365 day retention (default 7 days Enterprise, 15 Enterprise Plus)
 - **Azure Database**: Automated backups with 7-35 day retention
 
 **Retention Policy:**
 
 - Daily snapshots: 30 days (hot storage)
-- Monthly snapshots: 7 years (cold storage for compliance)
+- Monthly snapshots: 7 years (house policy; covers HIPAA's 6-year documentation rule and PCI's 12 months - GDPR storage limitation argues against blanket multi-year retention of personal data)
 
 **Backup Encryption:**
 
@@ -1224,9 +1322,9 @@ Enable PITR for protection against accidental data deletion.
 
 **Configuration:**
 
-- **AWS RDS**: Enabled with automated backups (5-minute granularity)
-- **GCP Cloud SQL**: Enabled with binary logging
-- **Azure Database**: Enabled with automated backups
+- **AWS RDS**: Enabled with automated backups; restore to any point in the retention window (transaction logs ship to S3 every 5 minutes)
+- **GCP Cloud SQL**: Enabled with write-ahead log archiving (`--enable-point-in-time-recovery`; default on Enterprise Plus, console-only default on Enterprise)
+- **Azure Database**: Enabled with automated backups (WAL archiving, RPO up to 5 minutes)
 
 **Recovery Example:**
 
@@ -1254,7 +1352,7 @@ Maintain cross-region read replica for disaster recovery:
 
 - **AWS RDS**: Cross-region read replica
 - **GCP Cloud SQL**: Cross-region replica
-- **Azure Database**: Geo-restore
+- **Azure Database**: Cross-region read replica (geo-replica), or geo-restore from geo-redundant backup (up to 1-hour RPO; enable at server creation)
 
 **Recovery Steps:**
 
@@ -1263,13 +1361,19 @@ Maintain cross-region read replica for disaster recovery:
 3. Rotate database credentials
 
 ```bash
-# Rotate credentials after recovery
-aws secretsmanager create-secret \
-  --name prod/database/credentials-new \
+# Rotate credentials after recovery: change the password in the database,
+# then write a new version of the SAME secret so every consumer picks it up
+psql "host=prod-db-restored.cluster.us-east-1.rds.amazonaws.com dbname=mydb user=admin_user sslmode=verify-full sslrootcert=/etc/ssl/rds/global-bundle.pem" \
+  -c "ALTER USER api_app_user WITH PASSWORD 'new-secure-password';"
+
+aws secretsmanager put-secret-value \
+  --secret-id prod/database/credentials \
   --secret-string '{
     "username": "api_app_user",
     "password": "new-secure-password",
-    "host": "prod-db-restored.cluster.us-east-1.rds.amazonaws.com"
+    "host": "prod-db-restored.cluster.us-east-1.rds.amazonaws.com",
+    "port": 5432,
+    "database": "mydb"
   }'
 ```
 
@@ -1294,20 +1398,23 @@ Enable database audit logging for access tracking.
 
 **PostgreSQL (pgaudit):**
 
+Prerequisites (AWS RDS): run `CREATE ROLE rds_pgaudit NOLOGIN;`, then in the DB parameter group (not SQL: `ALTER SYSTEM` needs superuser, which RDS, Cloud SQL and Azure don't grant) add `pgaudit` to `shared_preload_libraries`, set `pgaudit.role = rds_pgaudit`, and reboot. On Cloud SQL, set the `cloudsql.enable_pgaudit` flag instead.
+
 ```sql
--- Enable pgaudit extension
+-- Enable pgaudit extension (fails until pgaudit is preloaded)
 CREATE EXTENSION pgaudit;
 
--- Log DDL and writes on sensitive tables
-ALTER SYSTEM SET pgaudit.log = 'ddl, write';
+-- Log DDL, privilege changes (GRANT/REVOKE, roles) and writes on all tables (session audit logging)
+ALTER DATABASE mydb SET pgaudit.log = 'ddl, role, write';
 
--- Log specific table access
-ALTER TABLE users SET (pgaudit.log = 'read, write');
+-- Log reads and writes on specific tables (object audit logging):
+-- pgaudit logs any statement the audit role holds the privilege for
+GRANT SELECT, INSERT, UPDATE, DELETE ON users TO rds_pgaudit;
 ```
 
 **What to Log:**
 
-- Failed authentication attempts
+- Failed authentication attempts (PostgreSQL server log, not pgaudit - export it to CloudWatch or Cloud Logging)
 - Schema changes (CREATE, ALTER, DROP)
 - Data modifications on sensitive tables
 - Privilege changes (GRANT, REVOKE)
@@ -1318,22 +1425,18 @@ Forward to centralized SIEM (Splunk, ELK Stack, cloud logging).
 
 ### Data Retention
 
-**Hot Storage (30 days):**
+Backup tiers follow the [Automated Backups](#automated-backups) retention policy: daily snapshots kept 30 days in hot storage for fast recovery, monthly snapshots kept 7 years as house policy (SOC 2 sets no period; HIPAA's 6 years covers Security Rule documentation, and medical-record retention is state law; GDPR storage limitation applies to every snapshot holding personal data). Long-term tier by provider:
 
-- Automated daily snapshots
-- Fast recovery
-
-**Cold Storage (7 years):**
-
-- Monthly snapshots exported to S3 Glacier/GCS Coldline/Azure Archive
-- Compliance requirements (SOC2, HIPAA)
+- AWS: AWS Backup plan with a monthly rule retained for 7 years (restorable RDS snapshots; lock the vault). RDS "Export to S3" writes Parquet for analytics and can't be restored to a database, so for a cheaper archive use `pg_dump` to S3 with a Glacier lifecycle rule
+- GCP: Cloud SQL enhanced backups (monthly schedule, retention up to 10 years) or `gcloud sql export sql` to a Coldline/Archive bucket
+- Azure: Azure Backup long-term retention for Flexible Server (pg_dump-based, up to 10 years)
 
 **Regulatory Requirements:**
 
-- **GDPR**: Right to deletion, 72-hour breach notification, encryption required
-- **HIPAA**: PHI encryption, 6-year audit log retention, encrypted backups
-- **PCI-DSS**: Cardholder data encryption, access restrictions, annual key rotation
-- **SOC2**: Access controls, encryption, continuous monitoring, 1-year log retention
+- **GDPR**: Right to erasure, 72-hour breach notification, encryption as an Art. 32 measure (not a blanket mandate), storage limitation
+- **HIPAA**: PHI encryption (addressable today; the January 2025 proposed rule would make it required), 6-year retention of Security Rule documentation (incl. audit records), tested backup and recovery plan
+- **PCI DSS v4.0.1**: Cardholder data encryption, access restrictions, key changes at the end of each key's defined cryptoperiod (Req 3.7.4), audit logs kept 12 months with 3 months immediately available (Req 10.5.1)
+- **SOC 2**: Access controls, encryption, continuous monitoring; no prescribed log retention - define one (1 year is common) and follow it
 
 ## 11. Attack Scenarios Prevented
 
@@ -1346,7 +1449,7 @@ This guide's security controls prevent real-world database attacks.
 
 **Database Breach via Application Compromise**
 
-- Attack: Application compromise with database credentials exposes all data
+- Attack: Leaked application database credentials expose all data (field-level encryption does not help once an attacker runs code as the application, which holds `kms:Decrypt`)
 - Mitigated by: Field-level encryption (sensitive data encrypted with KMS), least-privilege users (limited permissions), audit logging (detect unauthorized access)
 
 **Insider Threat (DBA / Cloud Admin)**
@@ -1381,6 +1484,9 @@ This guide's security controls prevent real-world database attacks.
 - [PostgreSQL Documentation](https://www.postgresql.org/docs/)
 - [PgBouncer](https://www.pgbouncer.org/)
 - [pgaudit](https://github.com/pgaudit/pgaudit)
+- [PostgreSQL Row Security Policies](https://www.postgresql.org/docs/current/ddl-rowsecurity.html)
+- [PostgreSQL CREATE VIEW (security_invoker)](https://www.postgresql.org/docs/current/sql-createview.html)
+- [AWS Row-Level Security Recommendations for Multi-Tenant PostgreSQL](https://docs.aws.amazon.com/prescriptive-guidance/latest/saas-multitenant-managed-postgresql/rls.html)
 
 ### Managed Database Services
 
@@ -1392,17 +1498,17 @@ This guide's security controls prevent real-world database attacks.
 ### Encryption & Key Management
 
 - [AWS KMS](https://aws.amazon.com/kms/)
-- [AWS Encryption SDK](https://docs.aws.amazon.com/encryption-sdk/)
-- [GCP Cloud KMS](https://cloud.google.com/kms)
-- [Azure Key Vault](https://azure.microsoft.com/en-us/services/key-vault/)
-- [Google Tink](https://github.com/google/tink)
+- [AWS Encryption SDK](https://docs.aws.amazon.com/encryption-sdk/latest/developer-guide/introduction.html)
+- [GCP Cloud KMS](https://cloud.google.com/security/products/security-key-management)
+- [Azure Key Vault](https://azure.microsoft.com/en-us/products/key-vault/)
+- [Google Tink](https://developers.google.com/tink)
 
-### Secrets Management
+### Secrets Management Services
 
 - [AWS Secrets Manager](https://aws.amazon.com/secrets-manager/)
-- [GCP Secret Manager](https://cloud.google.com/secret-manager)
-- [Azure Key Vault](https://azure.microsoft.com/en-us/services/key-vault/)
-- [HashiCorp Vault](https://www.vaultproject.io/)
+- [GCP Secret Manager](https://cloud.google.com/security/products/secret-manager)
+- [Azure Key Vault](https://azure.microsoft.com/en-us/products/key-vault/)
+- [HashiCorp Vault](https://developer.hashicorp.com/vault)
 
 ### Standards & Compliance
 
@@ -1411,3 +1517,14 @@ This guide's security controls prevent real-world database attacks.
 - [PCI-DSS Requirements](https://www.pcisecuritystandards.org/)
 - [HIPAA Security Rule](https://www.hhs.gov/hipaa/for-professionals/security/index.html)
 - [GDPR](https://gdpr.eu/)
+- [NIST SP 800-63B-4 Authentication and Authenticator Management](https://pages.nist.gov/800-63-4/sp800-63b.html)
+- [OWASP Secrets Management Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Secrets_Management_Cheat_Sheet.html)
+- [PCI DSS v4.0.1 Standard](https://docs-prv.pcisecuritystandards.org/PCI%20DSS/Standard/PCI-DSS-v4_0_1.pdf)
+- [HIPAA Documentation Retention (45 CFR 164.316)](https://www.law.cornell.edu/cfr/text/45/164.316)
+
+### Incident Reports
+
+- [FTC: Uber Revised Complaint (2016 Breach)](https://www.ftc.gov/system/files/documents/cases/152_3054_c-4662_uber_technologies_revised_complaint.pdf)
+- [GAO-18-559: Equifax Data Breach](https://www.gao.gov/assets/gao-18-559.pdf)
+- [DOJ: Capital One Intruder Convicted](https://www.justice.gov/usao-wdwa/pr/former-seattle-tech-worker-convicted-wire-fraud-and-computer-intrusions)
+- [MGM Resorts Breach: 10.6M Guests Confirmed](https://www.silicon.co.uk/cloud/cloud-management/mgm-resorts-data-breach-10-million-331834)
